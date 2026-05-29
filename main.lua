@@ -318,6 +318,26 @@ local function main()
             local ortho_zoom = pc.spread * 100.0 -- Repurpose spread for zoom memory
             local aspect = sc.extent.width / math.max(1, sc.extent.height)
 
+            if is_isometric then
+                -- Lock to pure isometric angles (Positive pitch looks DOWN in this engine)
+                cam_pitch = 0.6154  -- approx 35.264 degrees
+                cam_yaw = 0.7853    -- approx 45 degrees
+
+                -- Map Q/E to Orthographic Zoom instead of Y-Axis height
+                local zoom_speed = move_speed * dt * 0.05
+                if bit.band(wasd, 16) ~= 0 then ortho_zoom = ortho_zoom - zoom_speed end
+                if bit.band(wasd, 32) ~= 0 then ortho_zoom = ortho_zoom + zoom_speed end
+                ortho_zoom = math.max(500.0, ortho_zoom)
+                pc.spread = ortho_zoom / 100.0
+
+                vmath.ortho_revz(-ortho_zoom * aspect, ortho_zoom * aspect, -ortho_zoom, ortho_zoom, -20000.0, 20000.0, proj)
+            else
+                -- 3D Free-Cam Input
+                cam_yaw = cam_yaw + (dx * sensitivity)
+                cam_pitch = math.max(-1.5, math.min(1.5, cam_pitch + (dy * sensitivity)))
+                vmath.perspective_inf_revz(70.0, aspect, 0.1, proj)
+            end
+
             -- Base directional vectors (PURE - strictly for vmath.lookAt)
             local fwd_x = math.sin(cam_yaw) * math.cos(cam_pitch)
             local fwd_y = -math.sin(cam_pitch)
