@@ -70,8 +70,20 @@ void main() {
 
     if (pc.target_state == MODE_POINT_CLOUD_PASS) {
         float base_size = 2.0 + (h2 * 8.0);
-        float projected_size = (base_size * pc.spread * 60.0) / dist;
-        gl_PointSize = max(2.0, projected_size);
+        
+        // Detect if we are in Orthographic or Perspective mode based on W
+        // In perspective, w is the distance to the camera. In ortho, w is exactly 1.0.
+        if (abs(clip_pos.w - 1.0) < 0.001) {
+            // Isometric Mode: Points don't scale by distance, but they should scale by zoom level.
+            // pc.spread represents the zoom level in ortho mode (smaller spread = zoomed in)
+            // We invert the relationship so points get bigger when zoomed in.
+            float ortho_scale_factor = 20.0 / max(1.0, pc.spread); 
+            gl_PointSize = max(2.0, base_size * ortho_scale_factor);
+        } else {
+            // 3D Free-Cam Mode: Standard perspective scaling
+            float projected_size = (base_size * pc.spread * 60.0) / dist;
+            gl_PointSize = max(2.0, projected_size);
+        }
     }
 
     float normalized_y = clamp((anchor.y + 5000.0) / 10000.0, 0.0, 1.0);
