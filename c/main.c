@@ -198,7 +198,7 @@ void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, in
         }
     }
     if (action == GLFW_PRESS) {
-        if (key == GLFW_KEY_1 || key == GLFW_KEY_2 || key == GLFW_KEY_3 || key == GLFW_KEY_3 || key == GLFW_KEY_F5) {
+        if (key == GLFW_KEY_1 || key == GLFW_KEY_2 || key == GLFW_KEY_3 || key == GLFW_KEY_4 || key == GLFW_KEY_F5) {
             atomic_store_explicit(&g_engine.mailbox.last_key_pressed, key, memory_order_release);
         }
     }
