@@ -268,38 +268,88 @@ local function main()
             local dt = math.max(0.001, math.min(current_time - last_time, 0.033))
             last_time = current_time
 
-            -- Input Polling
-            local dx = ffi.C.vx_input_mouse_dx()
+local dx = ffi.C.vx_input_mouse_dx()
             local dy = ffi.C.vx_input_mouse_dy()
             local wasd = ffi.C.vx_input_wasd()
 
-            cam_yaw = cam_yaw + (dx * sensitivity)
-            cam_pitch = math.max(-1.5, math.min(1.5, cam_pitch + (dy * sensitivity)))
+            -- [NEW] Camera Mode Toggle State
+            local is_isometric = pc.bg_color_b == 0xFF00AAFF -- We can use an unused push constant to hold state, or just a local var
+            
+            local last_key = ffi.C.vx_input_last_key()
+            if last_key == bp.key.esc then ffi.C.vx_core_shutdown()
+            elseif last_key == bp.key.f5 then wants_hotswap = true
+            elseif last_key == bp.key.num1 then active_render_mode = bp.mode.dual
+            elseif last_key == bp.key.num2 then active_render_mode = bp.mode.geom
+            elseif last_key == bp.key.num3 then active_render_mode = bp.mode.points
+            elseif last_key == bp.key.num4 then 
+                is_isometric = not is_isometric 
+                print(is_isometric and "\n[LUA CO] Snap: ISOMETRIC PIZZA WORLD" or "\n[LUA CO] Snap: 3D FREE-CAM")
+            end
 
+            -- Store the state in the unused push constant to persist across frames
+            pc.bg_color_b = is_isometric and 0xFF00AAFF or 0xFF442211
+            pc.bg_color_a = active_render_mode
+
+            -- [NEW] Dynamic Projection Routing
+            local ortho_zoom = pc.spread * 100.0 -- Repurpose spread for zoom memory
+            local aspect = sc.extent.width / math.max(1, sc.extent.height)
+
+            if is_isometric then
+                -- Lock to pure isometric angles
+                cam_pitch = -0.6154 -- approx -35.264 degrees
+                cam_yaw = 0.7853    -- approx 45 degrees
+
+                -- Map Q/E to Orthographic Zoom instead of Y-Axis height
+                local zoom_speed = move_speed * dt * 0.05
+                if bit.band(wasd, 16) ~= 0 then ortho_zoom = ortho_zoom - zoom_speed end
+                if bit.band(wasd, 32) ~= 0 then ortho_zoom = ortho_zoom + zoom_speed end
+                ortho_zoom = math.max(500.0, ortho_zoom)
+                pc.spread = ortho_zoom / 100.0
+
+                vmath.ortho_revz(-ortho_zoom * aspect, ortho_zoom * aspect, -ortho_zoom, ortho_zoom, -20000.0, 20000.0, proj)
+            else
+                -- 3D Free-Cam Input
+                cam_yaw = cam_yaw + (dx * sensitivity)
+                cam_pitch = math.max(-1.5, math.min(1.5, cam_pitch + (dy * sensitivity)))
+                vmath.perspective_inf_revz(70.0, aspect, 0.1, proj)
+            end
+
+            -- Base directional vectors
             local fwd_x = math.sin(cam_yaw) * math.cos(cam_pitch)
             local fwd_y = -math.sin(cam_pitch)
             local fwd_z = math.cos(cam_yaw) * math.cos(cam_pitch)
             local right_x = math.cos(cam_yaw)
             local right_z = -math.sin(cam_yaw)
-            local frame_speed = move_speed * dt
 
+            -- [NEW] Flatten Movement Vector for Isometric Panning
+            if is_isometric then
+                fwd_x = math.sin(cam_yaw)
+                fwd_y = 0.0
+                fwd_z = math.cos(cam_yaw)
+            end
+
+            local frame_speed = move_speed * dt
             if bit.band(wasd, 1) ~= 0 then cam_pos.x = cam_pos.x + fwd_x * frame_speed; cam_pos.y = cam_pos.y + fwd_y * frame_speed; cam_pos.z = cam_pos.z + fwd_z * frame_speed end
             if bit.band(wasd, 2) ~= 0 then cam_pos.x = cam_pos.x - fwd_x * frame_speed; cam_pos.y = cam_pos.y - fwd_y * frame_speed; cam_pos.z = cam_pos.z - fwd_z * frame_speed end
             if bit.band(wasd, 4) ~= 0 then cam_pos.x = cam_pos.x - right_x * frame_speed; cam_pos.z = cam_pos.z - right_z * frame_speed end
             if bit.band(wasd, 8) ~= 0 then cam_pos.x = cam_pos.x + right_x * frame_speed; cam_pos.z = cam_pos.z + right_z * frame_speed end
-            if bit.band(wasd, 16) ~= 0 then cam_pos.y = cam_pos.y + frame_speed end
-            if bit.band(wasd, 32) ~= 0 then cam_pos.y = cam_pos.y - frame_speed end
+
+            -- Only allow free Y-axis translation in 3D mode
+            if not is_isometric then
+                if bit.band(wasd, 16) ~= 0 then cam_pos.y = cam_pos.y + frame_speed end
+                if bit.band(wasd, 32) ~= 0 then cam_pos.y = cam_pos.y - frame_speed end
+            end
 
             vmath.lookAt(cam_pos.x, cam_pos.y, cam_pos.z, cam_pos.x + fwd_x, cam_pos.y + fwd_y, cam_pos.z + fwd_z, view)
 
+            -- Time & Matrix pushes
             pc.dt = pc.dt + dt
             total_time = total_time + dt
             pc.total_time = total_time
-            pc.spread = 120.0
             pc.highlight_power = 64.0
             pc.algae_color = 0xFF22AA44
             pc.water_color = 0xFFFF8800
-            pc.bg_color_b = 0xFF442211
+
             vmath.multiply_mat4(proj, view, pc.viewProj)
 
             local space_is_down = (ffi.C.vx_input_spacebar() == 1)

@@ -55,7 +55,7 @@ end
 
 function vmath.perspective_inf_revz(fov_degrees, aspect, near, out_mat)
     local f = 1.0 / math.tan(math.rad(fov_degrees) * 0.5)
-    
+
     -- NATIVE COLUMN-MAJOR REVERSE-Z
     out_mat.m[0] = f / aspect; out_mat.m[4] = 0.0; out_mat.m[8]  = 0.0;  out_mat.m[12] = 0.0
     out_mat.m[1] = 0.0;        out_mat.m[5] = -f;  out_mat.m[9]  = 0.0;  out_mat.m[13] = 0.0
@@ -76,6 +76,28 @@ function vmath.multiply_mat4(a, b, out_mat)
     for k = 0, 15 do
         out_mat.m[k] = temp_mat.m[k]
     end
+end
+
+function vmath.ortho_revz(left, right, bottom, top, near, far, out_mat)
+    out_mat.m[0] = 2.0 / (right - left)
+    out_mat.m[4] = 0.0
+    out_mat.m[8] = 0.0
+    out_mat.m[12] = -(right + left) / (right - left)
+
+    out_mat.m[1] = 0.0
+    out_mat.m[5] = -2.0 / (top - bottom) -- Negative for Vulkan Y-down
+    out_mat.m[9] = 0.0
+    out_mat.m[13] = -(top + bottom) / (top - bottom)
+
+    out_mat.m[2] = 0.0
+    out_mat.m[6] = 0.0
+    out_mat.m[10] = 1.0 / (near - far) -- Reverse-Z mapping
+    out_mat.m[14] = -far / (near - far)
+
+    out_mat.m[3] = 0.0
+    out_mat.m[7] = 0.0
+    out_mat.m[11] = 0.0
+    out_mat.m[15] = 1.0
 end
 
 return vmath
