@@ -182,8 +182,12 @@ local function main()
     local vmath = require("vmath")
     vmath.perspective_inf_revz(70.0, aspect, 0.1, proj)
 
-    local cam_pos = {x = 0.0, y = 0.0, z = -600.0}
-    local cam_yaw, cam_pitch = 0.0, 0.0
+    -- Place the camera high in the sky, exactly over the center of the pizza world
+    local cam_pos = {x = 0.0, y = 5000.0, z = 0.0}
+
+    -- Start with the isometric angles so the 3D mode aligns with the 2D mode initially
+    local cam_yaw, cam_pitch = 0.7853, 0.6154
+
     local sensitivity, move_speed = 0.002, 320000.0
 
     local last_time = get_time_hires()
