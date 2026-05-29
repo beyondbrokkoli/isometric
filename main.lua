@@ -288,21 +288,21 @@ local function main()
             local dt = math.max(0.001, math.min(current_time - last_time, 0.033))
             last_time = current_time
 
-local dx = ffi.C.vx_input_mouse_dx()
+            local dx = ffi.C.vx_input_mouse_dx()
             local dy = ffi.C.vx_input_mouse_dy()
             local wasd = ffi.C.vx_input_wasd()
 
             -- [NEW] Camera Mode Toggle State
             local is_isometric = pc.bg_color_b == 0xFF00AAFF -- We can use an unused push constant to hold state, or just a local var
-            
+
             local last_key = ffi.C.vx_input_last_key()
             if last_key == bp.key.esc then ffi.C.vx_core_shutdown()
             elseif last_key == bp.key.f5 then wants_hotswap = true
             elseif last_key == bp.key.num1 then active_render_mode = bp.mode.dual
             elseif last_key == bp.key.num2 then active_render_mode = bp.mode.geom
             elseif last_key == bp.key.num3 then active_render_mode = bp.mode.points
-            elseif last_key == bp.key.num4 then 
-                is_isometric = not is_isometric 
+            elseif last_key == bp.key.num4 then
+                is_isometric = not is_isometric
                 print(is_isometric and "\n[LUA CO] Snap: ISOMETRIC PIZZA WORLD" or "\n[LUA CO] Snap: 3D FREE-CAM")
             end
 
@@ -392,8 +392,8 @@ local dx = ffi.C.vx_input_mouse_dx()
 
             pc.bg_color_a = active_render_mode
             swarm_cmd.target_state = current_swarm_state - 1
-            swarm_cmd.push_active = ffi.C.vx_input_mouse_btn(0)
-            swarm_cmd.pull_active = ffi.C.vx_input_mouse_btn(1)
+            --swarm_cmd.push_active = ffi.C.vx_input_mouse_btn(0)
+            --swarm_cmd.pull_active = ffi.C.vx_input_mouse_btn(1)
             swarm_cmd.mouse_x = 0.0
             swarm_cmd.mouse_y = 5000.0
 
