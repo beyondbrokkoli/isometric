@@ -118,15 +118,35 @@ local function main()
         seed = memory.AVX_Arrays["seed"]
     }
 
-    -- 3. Populate Initial Particle State
-    for p = 0, requested_count - 1 do
-        cpu_soa.seed[p] = math.random()
-        cpu_soa.px[p] = (math.random() - 0.5) * 20000.0
-        cpu_soa.py[p] = (math.random() - 0.5) * 10000.0 + 5000.0
-        cpu_soa.pz[p] = (math.random() - 0.5) * 20000.0
-        cpu_soa.vx[p] = 0.0
-        cpu_soa.vy[p] = 0.0
-        cpu_soa.vz[p] = 0.0
+    print("[LUA CO] Forging Procedural Pizza World Terrain...")
+
+    -- Calculate grid dimensions based on the 1,000,000 particle count
+    local grid_size = math.floor(math.sqrt(requested_count)) -- ~1000x1000 grid
+    local spacing = 20.0
+    local offset_x = (grid_size * spacing) / 2.0
+    local offset_z = (grid_size * spacing) / 2.0
+
+    for i = 0, grid_size - 1 do
+        for j = 0, grid_size - 1 do
+            local p = i * grid_size + j
+            if p >= requested_count then break end
+
+            local world_x = (i * spacing) - offset_x
+            local world_z = (j * spacing) - offset_z
+
+            -- Procedural "Map-Bitmap" Topology (Sum of Sines for rolling hills)
+            local hill_macro = math.sin(world_x * 0.002) * math.cos(world_z * 0.002) * 600.0
+            local hill_micro = math.sin(world_x * 0.008 + 1.5) * math.sin(world_z * 0.006) * 150.0
+            local elevation = hill_macro + hill_micro
+
+            cpu_soa.seed[p] = math.random()
+            cpu_soa.px[p] = world_x
+            cpu_soa.py[p] = elevation -- Apply the hill height!
+            cpu_soa.pz[p] = world_z
+            cpu_soa.vx[p] = 0.0
+            cpu_soa.vy[p] = 0.0
+            cpu_soa.vz[p] = 0.0
+        end
     end
 
     -- 4. Compile Geometry Indices into VRAM
