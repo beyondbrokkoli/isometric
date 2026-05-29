@@ -135,6 +135,18 @@ local function main()
         end
     end
 
+    -- [NEW] The Flicker Fix: Initialize the Master Index Block!
+    -- Without this, the GPU reads random garbage indices and fetches out-of-bounds vertices.
+    print("[LUA CO] Initializing VRAM Index Buffer...")
+    local index_ptr = ffi.cast("uint32_t*", memory.Mapped["MASTER_INDEX_BLOCK"])
+
+    -- We need 24 indices for the Geometry pass.
+    -- We will safely wrap them around your 14 available SHAPE_LIBRARY vertices.
+    -- (You can manually map out your perfect isometric triangle indices here later!)
+    for i = 0, 23 do
+        index_ptr[i] = i % 14
+    end
+
     -- 6. Runtime State Initialization
     local MAX_DRAW_COMMANDS = 1024
     local render_queues = ffi.new("DrawCommand[?]", MAX_DRAW_COMMANDS * bp.cfg.frame_slots)
