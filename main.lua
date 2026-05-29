@@ -118,34 +118,48 @@ local function main()
         seed = memory.AVX_Arrays["seed"]
     }
 
-    print("[LUA CO] Forging Procedural Pizza World Terrain...")
-
-    -- Calculate grid dimensions based on the 1,000,000 particle count
-    local grid_size = math.floor(math.sqrt(requested_count)) -- ~1000x1000 grid
+print("[LUA CO] Forging Data-Driven Pizza World Tilemap...")
+    
+    local map_width = 1000
+    local map_height = 1000
     local spacing = 20.0
-    local offset_x = (grid_size * spacing) / 2.0
-    local offset_z = (grid_size * spacing) / 2.0
+    local offset_x = (map_width * spacing) / 2.0
+    local offset_z = (map_height * spacing) / 2.0
 
-    for i = 0, grid_size - 1 do
-        for j = 0, grid_size - 1 do
-            local p = i * grid_size + j
-            if p >= requested_count then break end
-
-            local world_x = (i * spacing) - offset_x
-            local world_z = (j * spacing) - offset_z
-
-            -- Procedural "Map-Bitmap" Topology (Sum of Sines for rolling hills)
+    -- 1. The Logical Map (The "Bitmap")
+    -- In the future, this can be populated by reading a PNG file!
+    local logical_map = ffi.new("float[?]", map_width * map_height)
+    
+    for z = 0, map_height - 1 do
+        for x = 0, map_width - 1 do
+            local idx = z * map_width + x
+            local world_x = (x * spacing) - offset_x
+            local world_z = (z * spacing) - offset_z
+            
+            -- Generate the height value
             local hill_macro = math.sin(world_x * 0.002) * math.cos(world_z * 0.002) * 600.0
             local hill_micro = math.sin(world_x * 0.008 + 1.5) * math.sin(world_z * 0.006) * 150.0
-            local elevation = hill_macro + hill_micro
+            
+            -- Store it in our logical SSoT array
+            logical_map[idx] = hill_macro + hill_micro
+        end
+    end
 
-            cpu_soa.seed[p] = math.random()
-            cpu_soa.px[p] = world_x
-            cpu_soa.py[p] = elevation -- Apply the hill height!
-            cpu_soa.pz[p] = world_z
-            cpu_soa.vx[p] = 0.0
-            cpu_soa.vy[p] = 0.0
-            cpu_soa.vz[p] = 0.0
+    -- 2. Populate the Engine AVX2 Arrays from the Logical Map
+    for z = 0, map_height - 1 do
+        for x = 0, map_width - 1 do
+            local map_idx = z * map_width + x
+            local p_idx = map_idx -- Direct 1:1 mapping of map tiles to particles
+            
+            if p_idx >= requested_count then break end
+
+            cpu_soa.seed[p_idx] = math.random()
+            cpu_soa.px[p_idx] = (x * spacing) - offset_x
+            cpu_soa.py[p_idx] = logical_map[map_idx] -- Read from the Map!
+            cpu_soa.pz[p_idx] = (z * spacing) - offset_z
+            cpu_soa.vx[p_idx] = 0.0
+            cpu_soa.vy[p_idx] = 0.0
+            cpu_soa.vz[p_idx] = 0.0
         end
     end
 
@@ -330,7 +344,8 @@ local function main()
                 ortho_zoom = math.max(500.0, ortho_zoom)
                 pc.spread = ortho_zoom / 100.0
 
-                vmath.ortho_revz(-ortho_zoom * aspect, ortho_zoom * aspect, -ortho_zoom, ortho_zoom, -20000.0, 20000.0, proj)
+                -- Expanded Near/Far planes from 20k to 1 Million!
+                vmath.ortho_revz(-ortho_zoom * aspect, ortho_zoom * aspect, -ortho_zoom, ortho_zoom, -1000000.0, 1000000.0, proj)
             else
                 -- 3D Free-Cam Input
                 cam_yaw = cam_yaw + (dx * sensitivity)
