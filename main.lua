@@ -118,8 +118,8 @@ local function main()
         seed = memory.AVX_Arrays["seed"]
     }
 
-print("[LUA CO] Forging Data-Driven Pizza World Tilemap...")
-    
+    print("[LUA CO] Forging Data-Driven Pizza World Tilemap...")
+
     local map_width = 1000
     local map_height = 1000
     local spacing = 20.0
@@ -129,17 +129,17 @@ print("[LUA CO] Forging Data-Driven Pizza World Tilemap...")
     -- 1. The Logical Map (The "Bitmap")
     -- In the future, this can be populated by reading a PNG file!
     local logical_map = ffi.new("float[?]", map_width * map_height)
-    
+
     for z = 0, map_height - 1 do
         for x = 0, map_width - 1 do
             local idx = z * map_width + x
             local world_x = (x * spacing) - offset_x
             local world_z = (z * spacing) - offset_z
-            
+
             -- Generate the height value
             local hill_macro = math.sin(world_x * 0.002) * math.cos(world_z * 0.002) * 600.0
             local hill_micro = math.sin(world_x * 0.008 + 1.5) * math.sin(world_z * 0.006) * 150.0
-            
+
             -- Store it in our logical SSoT array
             logical_map[idx] = hill_macro + hill_micro
         end
@@ -150,7 +150,7 @@ print("[LUA CO] Forging Data-Driven Pizza World Tilemap...")
         for x = 0, map_width - 1 do
             local map_idx = z * map_width + x
             local p_idx = map_idx -- Direct 1:1 mapping of map tiles to particles
-            
+
             if p_idx >= requested_count then break end
 
             cpu_soa.seed[p_idx] = math.random()
@@ -202,7 +202,7 @@ print("[LUA CO] Forging Data-Driven Pizza World Tilemap...")
     -- Start with the isometric angles so the 3D mode aligns with the 2D mode initially
     local cam_yaw, cam_pitch = 0.7853, 0.6154
 
-    local sensitivity, move_speed = 0.002, 320000.0
+    local sensitivity, move_speed = 0.002, 80000.0
 
     local last_time = get_time_hires()
     local total_time = 0.0
