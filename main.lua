@@ -319,8 +319,8 @@ local function main()
             local aspect = sc.extent.width / math.max(1, sc.extent.height)
 
             if is_isometric then
-                -- Lock to pure isometric angles
-                cam_pitch = -0.6154 -- approx -35.264 degrees
+                -- Lock to pure isometric angles (Positive pitch looks DOWN in this engine)
+                cam_pitch = 0.6154  -- approx 35.264 degrees
                 cam_yaw = 0.7853    -- approx 45 degrees
 
                 -- Map Q/E to Orthographic Zoom instead of Y-Axis height
