@@ -331,40 +331,6 @@ EXPORT void vx_record_commands(VkCommandBuffer cmd, RenderPacket* p, DrawCommand
     VkCommandBufferBeginInfo beginInfo = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
     vkBeginCommandBuffer(cmd, &beginInfo);
 
-    // =========================================================
-    // PHASE 1: ASYNC COMPUTE GRAPH
-    // =========================================================
-    for (uint32_t i = 0; i < p->comp_count; i++) {
-        ComputeCommand* comp_cmd = &p->comp_queue[i];
-
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, (VkPipeline)comp_cmd->pipeline_id);
-
-        VkDescriptorSet dset = (VkDescriptorSet)comp_cmd->descriptor_set;
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, (VkPipelineLayout)comp_cmd->layout_id, 0, 1, &dset, 0, NULL);
-
-        // Push constants OR'd with VERTEX_BIT to safely cover the unified pipeline layout configuration
-        vkCmdPushConstants(cmd, (VkPipelineLayout)comp_cmd->layout_id,
-                           VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           comp_cmd->pc_offset, comp_cmd->pc_size, comp_cmd->push_constants + comp_cmd->pc_offset);
-
-        vkCmdDispatch(cmd, comp_cmd->group_x, comp_cmd->group_y, comp_cmd->group_z);
-
-        // Dynamic execution barrier injection
-        if (comp_cmd->barrier_src_stage != 0 && comp_cmd->barrier_dst_stage != 0) {
-            VkMemoryBarrier compBarrier = {
-                .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
-                .srcAccessMask = comp_cmd->barrier_src_access,
-                .dstAccessMask = comp_cmd->barrier_dst_access
-            };
-
-            vkCmdPipelineBarrier(
-                cmd,
-                comp_cmd->barrier_src_stage, comp_cmd->barrier_dst_stage,
-                0, 1, &compBarrier, 0, NULL, 0, NULL
-            );
-        }
-    }
-
     // 2. Setup Render Pass Barriers (Preserved)
     VkImageMemoryBarrier preBarriers[2] = {0};
     preBarriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -466,14 +432,10 @@ EXPORT void vx_record_commands(VkCommandBuffer cmd, RenderPacket* p, DrawCommand
         vkCmdSetDepthWriteEnableEXT(cmd, draw->depth_write);
         vkCmdSetDepthCompareOpEXT(cmd, draw->depth_compare_op);
 
-        // [SURGICAL PATCH: PARTIAL PUSH CONSTANTS]
         vkCmdPushConstants(
-            cmd,
-            (VkPipelineLayout)p->gfx_layout,
-            VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-            draw->pc_offset,
-            draw->pc_size,
-            draw->push_constants + draw->pc_offset
+            cmd, (VkPipelineLayout)p->gfx_layout,
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+            draw->pc_offset, draw->pc_size, draw->push_constants + draw->pc_offset
         );
 
         vkCmdDrawIndexed(cmd,

@@ -29,6 +29,15 @@ function ComputePipeline.Init(vk, device, pipelineLayout, configs)
     local count = #configs
     print(string.format("[COMPUTE] Forging %d-Pass Compute Shaders...", count))
 
+    -- [NEW] Early exit for pure graphics engines
+    if count == 0 then
+        return {
+            pipelineLayout = pipelineLayout,
+            pipelines = {},
+            modules = {}
+        }
+    end
+
     -- Dynamically size the C-arrays
     local pipelineInfos = ffi.new("VkComputePipelineCreateInfo[?]", count)
     local modules = {}

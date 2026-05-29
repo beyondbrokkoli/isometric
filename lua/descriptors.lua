@@ -7,7 +7,7 @@ local Descriptors = {}
 
 function Descriptors.Init(vk, device, master_gpu_buffer)
     print("[DESCRIPTORS] Wiring Master VRAM Arena as a Unified SSBO...")
-    local STAGE_ALL = bit.bor(vk_shader.vert, vk_shader.comp, vk_shader.frag)
+    local STAGE_ALL = bit.bor(vk_shader.vert, vk_shader.frag)
 
     -- 1. Descriptor Set Layout Binding (Single SSBO)
     local ssboBinding = ffi.new("VkDescriptorSetLayoutBinding[1]")

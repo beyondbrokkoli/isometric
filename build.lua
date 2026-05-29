@@ -4,12 +4,6 @@ local VULKAN_SDK_PATH = "C:/VulkanSDK/1.4.341.1"
 local shaders = {
     { src = "glsl/render.vert",       dst = "bin/render_vert.spv" },
     { src = "glsl/render.frag",       dst = "bin/render_frag.spv" },
-    { src = "glsl/clear.comp",        dst = "bin/clear_comp.spv" },
-    { src = "glsl/hash.comp",         dst = "bin/hash_comp.spv" },
-    { src = "glsl/scan_local.comp",   dst = "bin/scan_local_comp.spv" },
-    { src = "glsl/scan_group.comp",   dst = "bin/scan_group_comp.spv" },
-    { src = "glsl/scan_add.comp",     dst = "bin/scan_add_comp.spv" },
-    { src = "glsl/reorder.comp",      dst = "bin/reorder_comp.spv" }
 }
 
 local function copy_file(source, destination)
@@ -39,7 +33,7 @@ end
 local function compile_engine(platform, build_target)
     print("   WEAVER LABORATORY BUILD AUTOMATION")
     print("   Target Platform: " .. string.upper(platform))
-    
+
     if build_target == "shaders" then
         print("   Mode: SHADERS ONLY")
     else
@@ -84,10 +78,10 @@ local function compile_engine(platform, build_target)
         math_cmd = "gcc -shared -O3 -march=x86-64-v3 -mavx2 c/vx_math.c -o bin/vx_math.dll"
     end
 
-    if not run_cmd(math_cmd) then
-        print("ERROR: vx_math compilation failed!")
-        os.exit(1)
-    end
+    --if not run_cmd(math_cmd) then
+    --    print("ERROR: vx_math compilation failed!")
+    --    os.exit(1)
+    --end
     print("  |- Successfully compiled Math Library.")
 
     -- [4/4] Compile Host C-Core

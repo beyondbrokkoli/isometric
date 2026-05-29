@@ -80,21 +80,21 @@ print("--- AI SNAPSHOT ---")
 
 local order = {
     -- [ ENTRY POINTS ]
-    "main.lua",
+--    "main.lua",
 --    "build.lua",
 
     -- [ C-CORE ]
---    "c/main.c",
+    "c/main.c",
 --    "c/vx_math.c",
---    "c/shared_structs.h",
+    "c/shared_structs.h",
 
     -- [ LUA ENGINE MODULES ]
-    "lua/boilerplate.lua",
+--    "lua/boilerplate.lua",
 --    "lua/vulkan_core.lua",
 --    "lua/vulkan_headers.lua",
 --    "lua/swapchain.lua",
 --    "lua/descriptors.lua",
-    "lua/graphics_pipeline.lua",
+--    "lua/graphics_pipeline.lua",
 --    "lua/compute_pipeline.lua",
 --    "lua/renderer.lua",
 --    "lua/memory.lua",
@@ -106,11 +106,7 @@ local order = {
 --    "glsl/shared.glsl",
 --    "glsl/render.vert",
 --    "glsl/render.frag",
---    "glsl/hash.comp",
---    "glsl/scan_local.comp",
---    "glsl/scan_group.comp",
---    "glsl/scan_add.comp",
---    "glsl/reorder.comp"
+
 }
 
 for _, src in ipairs(order) do

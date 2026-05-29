@@ -15,22 +15,15 @@ void main() {
         float distSq = dot(ptc, ptc);
         float circle_mask = 1.0 - smoothstep(0.15, 0.25, distSq);
         float glow = pow(max(0.0, 1.0 - (sqrt(distSq) * 2.0)), 1.2);
-
         outColor = vec4(fragColor * 2.8, circle_mask * glow);
-    }
-    else {
+    } else {
         vec3 dpdx = dFdx(v_worldPos);
         vec3 dpdy = dFdy(v_worldPos);
         vec3 normal = normalize(cross(dpdx, dpdy));
-
+        
         vec3 lightDir = normalize(vec3(0.5, 1.0, 0.8));
-        vec3 viewDir = vec3(0.0, 0.0, 1.0);
-        vec3 halfDir = normalize(lightDir + viewDir);
-
         float diffuse = max(dot(normal, lightDir), 0.25);
-        float spec_intensity = mix(1.8, 0.3, v_colorIdx);
-        float specular = pow(max(dot(normal, halfDir), 0.0), pc.highlight_power) * spec_intensity;
-
-        outColor = vec4((fragColor * diffuse) + vec3(specular), 1.0);
+        
+        outColor = vec4(fragColor * diffuse, 1.0);
     }
 }
