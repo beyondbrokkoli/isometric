@@ -34,8 +34,8 @@ $ bin/boot.exe
 [WEAVER] Packing C-Core Mailbox and firing Render Thread...
 [WEAVER] Engine Initialization Complete. Async Overlord is LIVE.
 [LUA IO] Weaver sequence complete! Unpacking God Object...
-[C-CORE] Async Render Thread Online.
 [LUA IO] Initializing CPU Data Structures...
+[C-CORE] Async Render Thread Online.
 [MEMORY] Allocated Fast CPU RAM: px (3.81 MB)
 [MEMORY] Allocated Fast CPU RAM: py (3.81 MB)
 [MEMORY] Allocated Fast CPU RAM: pz (3.81 MB)
@@ -69,18 +69,23 @@ $ bin/boot.exe
 
 [LUA CO] Snap: ISOMETRIC PIZZA WORLD
 
+[C-CORE] Shutdown triggered. Waiting for Lua VM...
+
+[LUA IO] Render Loop Terminated. Commencing Teardown...
+[TEARDOWN] Terminating Async Render Thread and Worker Pool...
+
 [VULKAN LAYER ENFORCER]
 SEVERITY: 4096
-MESSAGE: vkQueueSubmit(): pSubmits[0].pWaitSemaphores[0] queue (VkQueue 0x26e86891428) is waiting on semaphore (VkSemaphore 0x580000000058) that has no way to be signaled.
+MESSAGE: vkQueueSubmit(): pSubmits[0].pWaitSemaphores[0] queue (VkQueue 0x217f4919588) is waiting on semaphore (VkSemaphore 0x520000000052) that has no way to be signaled.
 The Vulkan spec states: All elements of the pWaitSemaphores member of all elements of pSubmits created with a VkSemaphoreType of VK_SEMAPHORE_TYPE_BINARY must reference a semaphore signal operation that has been submitted for execution and any semaphore signal operations on which it depends must have also been submitted for execution (https://docs.vulkan.org/spec/latest/chapters/cmdbuffers.html#VUID-vkQueueSubmit-pWaitSemaphores-03238)
 
 
 [VULKAN LAYER ENFORCER]
 SEVERITY: 4096
-MESSAGE: vkQueueSubmit(): pSubmits[0].pSignalSemaphores[0] (VkSemaphore 0x560000000056) is being signaled by VkQueue 0x26e86891428, but it may still be in use by VkSwapchainKHR 0x440000000044.
-Most recently acquired image indices: 0, 1, 2, 0, 1, 2, 0, [1].
-(Brackets mark the last use of VkSemaphore 0x560000000056 in a presentation operation.)
-Swapchain image 1 was presented but was not re-acquired, so VkSemaphore 0x560000000056 may still be in use.
+MESSAGE: vkQueueSubmit(): pSubmits[0].pSignalSemaphores[0] (VkSemaphore 0x590000000059) is being signaled by VkQueue 0x217f4919588, but it may still be in use by VkSwapchainKHR 0x440000000044.
+Most recently acquired image indices: 1, 2, 0, 1, 2, 0, 1, [2].
+(Brackets mark the last use of VkSemaphore 0x590000000059 in a presentation operation.)
+Swapchain image 2 was presented but was not re-acquired, so VkSemaphore 0x590000000059 may still be in use.
 Vulkan insight: See https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html for details on swapchain semaphore reuse. Examples of possible approaches:
    a) Use a separate semaphore per swapchain image. Index these semaphores using the index of the acquired image.
    b) Consider the VK_KHR_swapchain_maintenance1 extension. It allows using a VkFence with the presentation operation.
@@ -89,42 +94,18 @@ The Vulkan spec states: Each binary semaphore element of the pSignalSemaphores m
 
 [VULKAN LAYER ENFORCER]
 SEVERITY: 4096
-MESSAGE: vkQueuePresentKHR(): pPresentInfo->pSwapchains[0] image at index 1 was not acquired from the swapchain.
+MESSAGE: vkQueuePresentKHR(): pPresentInfo->pSwapchains[0] image at index 2 was not acquired from the swapchain.
 The Vulkan spec states: Each element of pImageIndices must be the index of a presentable image acquired from the swapchain specified by the corresponding element of the pSwapchains array, and the presented image subresource must be in the VK_IMAGE_LAYOUT_PRESENT_SRC_KHR or VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR layout at the time the operation is executed on a VkDevice (https://docs.vulkan.org/spec/latest/chapters/VK_KHR_surface/wsi.html#VUID-VkPresentInfoKHR-pImageIndices-01430)
 
-
-[VULKAN LAYER ENFORCER]
-SEVERITY: 4096
-MESSAGE: vkAcquireNextImageKHR(): Semaphore must not have any pending operations.
-The Vulkan spec states: If semaphore is not VK_NULL_HANDLE, it must not have any uncompleted signal or wait operations pending (https://docs.vulkan.org/spec/latest/chapters/VK_KHR_surface/wsi.html#VUID-vkAcquireNextImageKHR-semaphore-01779)
-
-
-[VULKAN LAYER ENFORCER]
-SEVERITY: 4096
-MESSAGE: vkResetFences(): pFences[0] (VkFence 0x540000000054) is in use.
-The Vulkan spec states: Each element of pFences must not be currently associated with any queue command that has not yet completed execution on that queue (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-vkResetFences-pFences-01123)
-
-
-[VULKAN LAYER ENFORCER]
-SEVERITY: 4096
-MESSAGE: vkResetCommandBuffer(): (VkCommandBuffer 0x26e86ba2f98) is in use.
-The Vulkan spec states: commandBuffer must not be in the pending state (https://docs.vulkan.org/spec/latest/chapters/cmdbuffers.html#VUID-vkResetCommandBuffer-commandBuffer-00045)
-
-
-[VULKAN LAYER ENFORCER]
-SEVERITY: 4096
-MESSAGE: vkBeginCommandBuffer(): on active VkCommandBuffer 0x26e86ba2f98 before it has completed. You must check command buffer fence before this call.
-The Vulkan spec states: commandBuffer must not be in the recording or pending state (https://docs.vulkan.org/spec/latest/chapters/cmdbuffers.html#VUID-vkBeginCommandBuffer-commandBuffer-00049)
-
-
-[VULKAN LAYER ENFORCER]
-SEVERITY: 4096
-MESSAGE: vkQueueSubmit(): pSubmits[0].pCommandBuffers[0] VkCommandBuffer 0x26e86ba2f98 is already in use and is not marked for simultaneous use.
-The Vulkan spec states: If any element of the pCommandBuffers member of any element of pSubmits was not recorded with the VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT, it must not be in the pending state (https://docs.vulkan.org/spec/latest/chapters/cmdbuffers.html#VUID-vkQueueSubmit-pCommandBuffers-00071)
-
-
-[VULKAN LAYER ENFORCER]
-SEVERITY: 4096
-MESSAGE: vkQueueSubmit(): pSubmits[0].pWaitSemaphores[0] queue (VkQueue 0x26e86891428) is waiting on semaphore (VkSemaphore 0x520000000052) that has no way to be signaled.
-The Vulkan spec states: All elements of the pWaitSemaphores member of all elements of pSubmits created with a VkSemaphoreType of VK_SEMAPHORE_TYPE_BINARY must reference a semaphore signal operation that has been submitted for execution and any semaphore signal operations on which it depends must have also been submitted for execution (https://docs.vulkan.org/spec/latest/chapters/cmdbuffers.html#VUID-vkQueueSubmit-pWaitSemaphores-03238)
-
+[C-CORE] Async Render Thread gracefully terminated and pool destroyed.
+[C-CORE] Async Render Thread gracefully terminated for rebuild.
+[TEARDOWN] Destroying Graphics Pipelines & Depth Buffer...
+[TEARDOWN] Dismantling Compute Graph Pipelines...
+[TEARDOWN] Deconstructing Descriptors...
+[TEARDOWN] Destroying Swapchain & Image Views...
+[TEARDOWN] Dismantling Renderer Sync Objects...
+[TEARDOWN] Freeing VRAM and CPU Memory Arenas...
+[TEARDOWN] Shutting down Vulkan Core...
+[LUA IO] Teardown Complete. Safe Exit.
+[LUA-OS-THREAD] VM Destroyed.
+[C-CORE] Clean Exit.
