@@ -1,0 +1,55 @@
+AzureAD+HalimOmarZaghdoudi@DESKTOP-BD3FFTI MINGW64 ~/boilerplate
+$ lua build.lua win
+   WEAVER LABORATORY BUILD AUTOMATION
+   Target Platform: WIN
+
+[1/4] Generating C Header SSoT from Boilerplate...
+[LUA SSOT] Wrote glsl/registry.glsl
+[LUA SSOT] Wrote c/shared_structs.h
+
+[2/4] Compiling GLSL Shaders to SPIR-V...
+  |- Compiled: bin/render_vert.spv
+  |- Compiled: bin/render_frag.spv
+  |- Compiled: bin/clear_comp.spv
+  |- Compiled: bin/hash_comp.spv
+  |- Compiled: bin/scan_local_comp.spv
+  |- Compiled: bin/scan_group_comp.spv
+  |- Compiled: bin/scan_add_comp.spv
+  |- Compiled: bin/reorder_comp.spv
+
+[3/4] Compiling AVX2 Worker Pool (vx_math.c)...
+C:/msys64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/16.1.0/../../../../x86_64-w64-mingw32/bin/ld.exe: cannot open output file bin/vx_math.dll: Permission denied
+collect2.exe: error: ld returned 1 exit status
+ERROR: vx_math compilation failed!
+
+AzureAD+HalimOmarZaghdoudi@DESKTOP-BD3FFTI MINGW64 ~/boilerplate
+$ lua build.lua win
+   WEAVER LABORATORY BUILD AUTOMATION
+   Target Platform: WIN
+
+[1/4] Generating C Header SSoT from Boilerplate...
+[LUA SSOT] Wrote glsl/registry.glsl
+[LUA SSOT] Wrote c/shared_structs.h
+
+[2/4] Compiling GLSL Shaders to SPIR-V...
+  |- Compiled: bin/render_vert.spv
+  |- Compiled: bin/render_frag.spv
+  |- Compiled: bin/clear_comp.spv
+  |- Compiled: bin/hash_comp.spv
+  |- Compiled: bin/scan_local_comp.spv
+  |- Compiled: bin/scan_group_comp.spv
+  |- Compiled: bin/scan_add_comp.spv
+  |- Compiled: bin/reorder_comp.spv
+
+[3/4] Compiling AVX2 Worker Pool (vx_math.c)...
+  |- Successfully compiled Math Library.
+
+[4/4] Compiling Laboratory Host (main.c) ...
+
+[Packing Windows Dependencies (DLLs)...]
+  |- DLLs copied successfully.
+
+[SUCCESS] Laboratory build complete!
+
+
+AzureAD+HalimOmarZaghdoudi@DESKTOP-BD3FFTI MINGW64 ~/boilerplate

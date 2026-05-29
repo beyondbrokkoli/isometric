@@ -1,0 +1,57 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "shared.glsl"
+
+layout(set = 0, binding = 0) buffer MasterBuffer { uint data[]; } vram;
+
+layout(local_size_x = 1024) in;
+
+shared uint temp[2048];
+
+void main() {
+    uint lid = gl_LocalInvocationID.x;
+    uint gid = gl_WorkGroupID.x;
+    
+    // Each thread loads 2 elements into shared memory
+    uint idx0 = gid * 2048 + (lid * 2);
+    uint idx1 = gid * 2048 + (lid * 2) + 1;
+    
+    temp[lid * 2]     = vram.data[pc.cell_counters_idx + idx0];
+    temp[lid * 2 + 1] = vram.data[pc.cell_counters_idx + idx1];
+    
+    // === UP-SWEEP ===
+    uint offset = 1;
+    for (uint d = 1024; d > 0; d >>= 1) {
+        barrier();
+        if (lid < d) {
+            uint ai = offset * (2 * lid + 1) - 1;
+            uint bi = offset * (2 * lid + 2) - 1;
+            temp[bi] += temp[ai];
+        }
+        offset *= 2;
+    }
+    
+    // Clear last element for exclusive scan & save total group sum to VRAM
+    if (lid == 0) {
+        vram.data[pc.cell_offsets_idx + 262144 + gid] = temp[2047];
+        temp[2047] = 0;
+    }
+    
+    // === DOWN-SWEEP ===
+    for (uint d = 1; d < 2048; d *= 2) {
+        offset >>= 1;
+        barrier();
+        if (lid < d) {
+            uint ai = offset * (2 * lid + 1) - 1;
+            uint bi = offset * (2 * lid + 2) - 1;
+            uint t = temp[ai];
+            temp[ai] = temp[bi];
+            temp[bi] += t;
+        }
+    }
+    barrier();
+    
+    // Write out local prefix sums
+    vram.data[pc.cell_offsets_idx + idx0] = temp[lid * 2];
+    vram.data[pc.cell_offsets_idx + idx1] = temp[lid * 2 + 1];
+}

@@ -1,0 +1,25 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "shared.glsl"
+
+layout(set = 0, binding = 0) buffer MasterBuffer { uint data[]; } vram;
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint p_id = gl_GlobalInvocationID.x;
+    if (p_id >= pc.particle_count) return;
+
+    uint aos_base = pc.aos_current_idx + (p_id * 4);
+    vec3 pos = vec3(
+        uintBitsToFloat(vram.data[aos_base + 0]),
+        uintBitsToFloat(vram.data[aos_base + 1]),
+        uintBitsToFloat(vram.data[aos_base + 2])
+    );
+
+    uint cell = get_cell_id(pos);
+
+    uint local_offset = atomicAdd(vram.data[pc.cell_counters_idx + cell], 1);
+    uint global_offset = vram.data[pc.cell_offsets_idx + cell] + local_offset;
+    vram.data[pc.sorted_idx + global_offset] = p_id;
+}

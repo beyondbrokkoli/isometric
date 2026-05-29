@@ -1,0 +1,51 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "shared.glsl"
+
+layout(set = 0, binding = 0) buffer MasterBuffer { uint data[]; } vram;
+
+layout(local_size_x = 64) in;
+
+shared uint temp[128];
+
+void main() {
+    uint lid = gl_LocalInvocationID.x;
+    uint base_idx = pc.cell_offsets_idx + 262144; // Pointer to the group sums
+    
+    uint idx0 = lid * 2;
+    uint idx1 = lid * 2 + 1;
+    
+    temp[idx0] = vram.data[base_idx + idx0];
+    temp[idx1] = vram.data[base_idx + idx1];
+    
+    // === UP-SWEEP ===
+    uint offset = 1;
+    for (uint d = 64; d > 0; d >>= 1) {
+        barrier();
+        if (lid < d) {
+            uint ai = offset * (2 * lid + 1) - 1;
+            uint bi = offset * (2 * lid + 2) - 1;
+            temp[bi] += temp[ai];
+        }
+        offset *= 2;
+    }
+    
+    if (lid == 0) temp[127] = 0;
+    
+    // === DOWN-SWEEP ===
+    for (uint d = 1; d < 128; d *= 2) {
+        offset >>= 1;
+        barrier();
+        if (lid < d) {
+            uint ai = offset * (2 * lid + 1) - 1;
+            uint bi = offset * (2 * lid + 2) - 1;
+            uint t = temp[ai];
+            temp[ai] = temp[bi];
+            temp[bi] += t;
+        }
+    }
+    barrier();
+    
+    vram.data[base_idx + idx0] = temp[idx0];
+    vram.data[base_idx + idx1] = temp[idx1];
+}
