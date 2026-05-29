@@ -12,7 +12,7 @@ local bp = {
     mouse = { left = 0, right = 1 },
     key   = { space = 32, num1 = 49, num2 = 50, num3 = 51, num4 = 52, esc = 256, f11 = 290, f5 = 294 },
 
-    cfg = { use_validation = 0, vk_api_version = 4206592, pcount = 1000000, grid_cells = 262144, pc_size = 128, frame_slots = 10, swap_slots = 10, swarm_states = 7 },
+    cfg = { use_validation = 1, vk_api_version = 4206592, pcount = 1000000, grid_cells = 262144, pc_size = 128, frame_slots = 10, swap_slots = 10, swarm_states = 7 },
 
     mode = { dual = 0, geom = 1, points = 2, point_cloud_pass = 88 },
 
