@@ -318,43 +318,30 @@ local function main()
             local ortho_zoom = pc.spread * 100.0 -- Repurpose spread for zoom memory
             local aspect = sc.extent.width / math.max(1, sc.extent.height)
 
-            if is_isometric then
-                -- Lock to pure isometric angles (Positive pitch looks DOWN in this engine)
-                cam_pitch = 0.6154  -- approx 35.264 degrees
-                cam_yaw = 0.7853    -- approx 45 degrees
-
-                -- Map Q/E to Orthographic Zoom instead of Y-Axis height
-                local zoom_speed = move_speed * dt * 0.05
-                if bit.band(wasd, 16) ~= 0 then ortho_zoom = ortho_zoom - zoom_speed end
-                if bit.band(wasd, 32) ~= 0 then ortho_zoom = ortho_zoom + zoom_speed end
-                ortho_zoom = math.max(500.0, ortho_zoom)
-                pc.spread = ortho_zoom / 100.0
-
-                vmath.ortho_revz(-ortho_zoom * aspect, ortho_zoom * aspect, -ortho_zoom, ortho_zoom, -20000.0, 20000.0, proj)
-            else
-                -- 3D Free-Cam Input
-                cam_yaw = cam_yaw + (dx * sensitivity)
-                cam_pitch = math.max(-1.5, math.min(1.5, cam_pitch + (dy * sensitivity)))
-                vmath.perspective_inf_revz(70.0, aspect, 0.1, proj)
-            end
-
-            -- Base directional vectors
+            -- Base directional vectors (PURE - strictly for vmath.lookAt)
             local fwd_x = math.sin(cam_yaw) * math.cos(cam_pitch)
             local fwd_y = -math.sin(cam_pitch)
             local fwd_z = math.cos(cam_yaw) * math.cos(cam_pitch)
             local right_x = math.cos(cam_yaw)
             local right_z = -math.sin(cam_yaw)
 
-            -- [NEW] Flatten Movement Vector for Isometric Panning
+            -- [NEW] Movement directional vectors (FLATTENED - strictly for WASD)
+            local move_fwd_x = fwd_x
+            local move_fwd_y = fwd_y
+            local move_fwd_z = fwd_z
+
             if is_isometric then
-                fwd_x = math.sin(cam_yaw)
-                fwd_y = 0.0
-                fwd_z = math.cos(cam_yaw)
+                -- Flatten movement to the XZ ground plane, but leave fwd_y alone!
+                move_fwd_x = math.sin(cam_yaw)
+                move_fwd_y = 0.0
+                move_fwd_z = math.cos(cam_yaw)
             end
 
             local frame_speed = move_speed * dt
-            if bit.band(wasd, 1) ~= 0 then cam_pos.x = cam_pos.x + fwd_x * frame_speed; cam_pos.y = cam_pos.y + fwd_y * frame_speed; cam_pos.z = cam_pos.z + fwd_z * frame_speed end
-            if bit.band(wasd, 2) ~= 0 then cam_pos.x = cam_pos.x - fwd_x * frame_speed; cam_pos.y = cam_pos.y - fwd_y * frame_speed; cam_pos.z = cam_pos.z - fwd_z * frame_speed end
+            -- Apply move_fwd for W and S
+            if bit.band(wasd, 1) ~= 0 then cam_pos.x = cam_pos.x + move_fwd_x * frame_speed; cam_pos.y = cam_pos.y + move_fwd_y * frame_speed; cam_pos.z = cam_pos.z + move_fwd_z * frame_speed end
+            if bit.band(wasd, 2) ~= 0 then cam_pos.x = cam_pos.x - move_fwd_x * frame_speed; cam_pos.y = cam_pos.y - move_fwd_y * frame_speed; cam_pos.z = cam_pos.z - move_fwd_z * frame_speed end
+            -- Apply right vector for A and D
             if bit.band(wasd, 4) ~= 0 then cam_pos.x = cam_pos.x - right_x * frame_speed; cam_pos.z = cam_pos.z - right_z * frame_speed end
             if bit.band(wasd, 8) ~= 0 then cam_pos.x = cam_pos.x + right_x * frame_speed; cam_pos.z = cam_pos.z + right_z * frame_speed end
 
@@ -364,6 +351,7 @@ local function main()
                 if bit.band(wasd, 32) ~= 0 then cam_pos.y = cam_pos.y - frame_speed end
             end
 
+            -- lookAt perfectly maintains the downward angle!
             vmath.lookAt(cam_pos.x, cam_pos.y, cam_pos.z, cam_pos.x + fwd_x, cam_pos.y + fwd_y, cam_pos.z + fwd_z, view)
 
             -- Time & Matrix pushes

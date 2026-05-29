@@ -89,17 +89,17 @@ local order = {
 --    "c/shared_structs.h",
 
     -- [ LUA ENGINE MODULES ]
-    "lua/boilerplate.lua",
-    "lua/vulkan_core.lua",
+--    "lua/boilerplate.lua",
+--    "lua/vulkan_core.lua",
 --    "lua/vulkan_headers.lua",
-    "lua/swapchain.lua",
-    "lua/descriptors.lua",
-    "lua/graphics_pipeline.lua",
-    "lua/compute_pipeline.lua",
-    "lua/renderer.lua",
-    "lua/memory.lua",
+--    "lua/swapchain.lua",
+--    "lua/descriptors.lua",
+--    "lua/graphics_pipeline.lua",
+--    "lua/compute_pipeline.lua",
+--    "lua/renderer.lua",
+--    "lua/memory.lua",
     "lua/vmath.lua",
-    "lua/registry_export.lua",
+--    "lua/registry_export.lua",
 
     -- [ GLSL SHADERS & SSOT ]
 --    "glsl/registry.glsl",
