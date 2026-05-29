@@ -322,7 +322,8 @@ local function main()
 
                 -- 2. Stream the RTS Logical Grid -> GPU AoS Buffer
                 -- We do this in Lua for rapid prototyping, translating SoA to AoS
-                local gpu_ptr = ffi.cast("float*", master_ptr + current_frame_offset)
+                -- FIX: master_ptr is a float*, so we must advance it by WORDS, not BYTES!
+                local gpu_ptr = master_ptr + (current_frame_offset / 4)
                 local gpu_u32 = ffi.cast("uint32_t*", gpu_ptr)
 
                 local spacing = 20.0

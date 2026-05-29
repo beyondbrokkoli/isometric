@@ -29,15 +29,20 @@ void main() {
     
     uint tile_data = vram.data[base_idx + 3];
     uint terrain_id = (tile_data >> 24) & 0xFF; 
-    
+
     vec3 local_pos = SHAPE_LIBRARY[gl_VertexIndex];
-    local_pos *= vec3(10.0, 5.0, 10.0); 
+    local_pos *= vec3(10.0, 5.0, 10.0);
     
     vec3 final_pos = tile_pos + local_pos;
+
+    // [NEW] Float the point cloud above the geometry in Dual Mode!
+    if (pc.target_state == MODE_POINT_CLOUD_PASS) {
+        final_pos.y += 8.0; 
+    }
+
     gl_Position = pc.viewProj * vec4(final_pos, 1.0);
+    v_worldPos = final_pos;
     
-    // --- RESTORED FRAGMENT SHADER VARIABLES ---
-    v_worldPos = final_pos; 
     v_shapeID = pc.target_state; 
     v_colorIdx = float(terrain_id) / 255.0; 
     
