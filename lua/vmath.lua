@@ -100,4 +100,26 @@ function vmath.ortho_revz(left, right, bottom, top, near, far, out_mat)
     out_mat.m[15] = 1.0
 end
 
+function vmath.ortho_vk(left, right, bottom, top, near, far, out_mat)
+    out_mat.m[0] = 2.0 / (right - left)
+    out_mat.m[4] = 0.0
+    out_mat.m[8] = 0.0
+    out_mat.m[12] = -(right + left) / (right - left)
+
+    out_mat.m[1] = 0.0
+    out_mat.m[5] = 2.0 / (bottom - top) -- Flipped for Vulkan's Y-down clip space
+    out_mat.m[9] = 0.0
+    out_mat.m[13] = -(bottom + top) / (bottom - top)
+
+    out_mat.m[2] = 0.0
+    out_mat.m[6] = 0.0
+    out_mat.m[10] = 1.0 / (far - near) -- Standard Z mapping [0, 1]
+    out_mat.m[14] = -near / (far - near)
+
+    out_mat.m[3] = 0.0
+    out_mat.m[7] = 0.0
+    out_mat.m[11] = 0.0
+    out_mat.m[15] = 1.0
+end
+
 return vmath

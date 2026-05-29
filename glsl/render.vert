@@ -30,72 +30,25 @@ mat3 rotate3D(float x, float y, float z) {
 }
 
 void main() {
-    uint real_p_id = gl_InstanceIndex;
-    uint sorted_p_id = vram.data[pc.sorted_idx + real_p_id];
-
-    // ZERO MAGIC NUMBERS
-    if (pc.bg_color_a == MODE_DUAL) {
-        if (pc.target_state != MODE_POINT_CLOUD_PASS && (sorted_p_id % 2) != 0) {
-            gl_Position = vec4(0.0, 0.0, 2.0, 1.0); return;
-        }
-        if (pc.target_state == MODE_POINT_CLOUD_PASS && (sorted_p_id % 2) == 0) {
-            gl_Position = vec4(0.0, 0.0, 2.0, 1.0); return;
-        }
-    }
-
-    uint aos_base = pc.aos_current_idx + (sorted_p_id * 4);
-    vec3 anchor = vec3(
-        uintBitsToFloat(vram.data[aos_base + 0]),
-        uintBitsToFloat(vram.data[aos_base + 1]),
-        uintBitsToFloat(vram.data[aos_base + 2])
+    // 4 uints per RtsTileInstance (px, py, pz, tile_data)
+    uint base_idx = pc.aos_current_idx + (gl_InstanceIndex * 4); 
+    
+    vec3 tile_pos = vec3(
+        uintBitsToFloat(vram.data[base_idx + 0]),
+        uintBitsToFloat(vram.data[base_idx + 1]),
+        uintBitsToFloat(vram.data[base_idx + 2])
     );
-
-    float h1 = hash(sorted_p_id); float h2 = hash(sorted_p_id + 1337); float h3 = hash(sorted_p_id + 42069);
-
-    vec3 local_pos = vec3(0.0);
-    if (pc.target_state != MODE_POINT_CLOUD_PASS) {
-        local_pos = SHAPE_LIBRARY[gl_VertexIndex];
-        vec3 scale = vec3(0.5 + h1 * 1.5, 0.5 + h2 * 3.0, 0.5 + h3 * 1.5) * 1000.0;
-        local_pos *= scale;
-
-        float rx = (h1 * 6.28) + (pc.total_time * (h1 - 0.5) * 0.8);
-        float ry = (h2 * 6.28) + (pc.total_time * (h2 - 0.5) * 0.8);
-        float rz = (h3 * 6.28) + (pc.total_time * (h3 - 0.5) * 0.8);
-        local_pos = rotate3D(rx, ry, rz) * local_pos;
-    }
-
-    vec3 final_pos = anchor + local_pos;
-    vec4 clip_pos = pc.viewProj * vec4(final_pos, 1.0);
-    float dist = max(clip_pos.w, 0.001);
-
-    if (pc.target_state == MODE_POINT_CLOUD_PASS) {
-        float base_size = 2.0 + (h2 * 8.0);
-        
-        // Detect if we are in Orthographic or Perspective mode based on W
-        // In perspective, w is the distance to the camera. In ortho, w is exactly 1.0.
-        if (abs(clip_pos.w - 1.0) < 0.001) {
-            // Isometric Mode: Points don't scale by distance, but they should scale by zoom level.
-            // pc.spread represents the zoom level in ortho mode (smaller spread = zoomed in)
-            // We invert the relationship so points get bigger when zoomed in.
-            float ortho_scale_factor = 20.0 / max(1.0, pc.spread); 
-            gl_PointSize = max(2.0, base_size * ortho_scale_factor);
-        } else {
-            // 3D Free-Cam Mode: Standard perspective scaling
-            float projected_size = (base_size * pc.spread * 60.0) / dist;
-            gl_PointSize = max(2.0, projected_size);
-        }
-    }
-
-    float normalized_y = clamp((anchor.y + 5000.0) / 10000.0, 0.0, 1.0);
-    float meridian_curve = smoothstep(0.3, 0.7, normalized_y);
-
-    vec3 c_algae = unpackUnorm4x8(pc.algae_color).rgb;
-    vec3 c_water = unpackUnorm4x8(pc.water_color).rgb;
-    vec3 base_color = mix(c_water, c_algae, meridian_curve);
-
-    v_worldPos = final_pos;
-    gl_Position = clip_pos;
-    fragColor = base_color * (0.75 + 0.5 * h1);
-    v_shapeID = pc.target_state;
-    v_colorIdx = meridian_curve;
+    
+    uint tile_data = vram.data[base_idx + 3];
+    uint terrain_id = (tile_data >> 24) & 0xFF; // Unpack the top 8 bits
+    
+    // Instead of random local_pos scaling, extrude mathematically satisfying cubes/slabs
+    vec3 local_pos = SHAPE_LIBRARY[gl_VertexIndex];
+    local_pos *= vec3(10.0, 5.0, 10.0); // Strict tile dimensions
+    
+    vec3 final_pos = tile_pos + local_pos;
+    gl_Position = pc.viewProj * vec4(final_pos, 1.0);
+    
+    // Pass color based on deterministic terrain_id, not random hashes!
+    v_colorIdx = float(terrain_id) / 255.0; 
 }

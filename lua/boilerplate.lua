@@ -94,10 +94,11 @@ local bp = {
     },
 
     vk_state = {
-        cull_none  = 0, front_ccw = 0,
-        topo_point = 0, topo_tri  = 3,
-        cmp_le     = 4,
-        depth_off  = 0, depth_on  = 1,
+        cull_none = 0, front_ccw = 0,
+        topo_point = 0, topo_tri = 3,
+        cmp_le = 3, -- Fixed: VK_COMPARE_OP_LESS_OR_EQUAL
+        cmp_ge = 4, -- Added: VK_COMPARE_OP_GREATER_OR_EQUAL
+        depth_off = 0, depth_on = 1,
     },
 
     vk_pipeline = {
@@ -129,6 +130,11 @@ local bp = {
 
     c_math_structs = [[
     typedef struct { float m[16]; } mat4_t;
+
+    typedef struct {
+        float px, py, pz;
+        uint32_t tile_data; // Packed: [8-bit Terrain ID] [8-bit Variant] [16-bit Flags]
+    } RtsTileInstance;
 
     typedef struct {
         mat4_t viewProj;
@@ -293,6 +299,7 @@ local bp = {
             cull_mode = 1,
             depth_test = 1,
             depth_write = 1,
+            depth_compare_op = 3, -- Data-driven explicitly here
             blend_enable = 0
         },
         points = {
@@ -302,6 +309,7 @@ local bp = {
             cull_mode = 0,
             depth_test = 1,
             depth_write = 0,
+            depth_compare_op = 3, -- Data-driven explicitly here
             blend_enable = 1
         }
     },

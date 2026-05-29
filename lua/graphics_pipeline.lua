@@ -75,8 +75,14 @@ local function BuildSinglePipeline(vk, device, layout, colorFormat, vertModule, 
 
     -- INJECT CONFIG: Depth
     local depthStencil = ffi.new("VkPipelineDepthStencilStateCreateInfo", {
-        sType = vk_struct.pipeline_depth_stencil_state_create, depthTestEnable = config.depth_test, depthWriteEnable = config.depth_write, depthCompareOp = vk_state.cmp_le
-    })
+            sType = vk_struct.pipeline_depth_stencil_state_create,
+            depthTestEnable = config.depth_test,
+            depthWriteEnable = config.depth_write,
+            -- READ DIRECTLY FROM CONFIG INSTEAD OF vk_state:
+            depthCompareOp = config.depth_compare_op,
+            depthBoundsTestEnable = 0,
+            stencilTestEnable = 0,
+        })
 
     -- INJECT CONFIG: Blending
     local colorBlendAttachment = ffi.new("VkPipelineColorBlendAttachmentState[1]")

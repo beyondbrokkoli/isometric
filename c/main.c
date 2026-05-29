@@ -398,7 +398,7 @@ EXPORT void vx_record_commands(VkCommandBuffer cmd, RenderPacket* p, DrawCommand
         .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
         .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
         .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-        .clearValue.depthStencil = {0.0f, 0}
+        .clearValue.depthStencil = {1.0f, 0}
     };
 
     VkRenderingInfoKHR renderInfo = {

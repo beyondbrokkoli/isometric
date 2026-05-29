@@ -120,65 +120,18 @@ local function main()
 
     print("[LUA CO] Forging Data-Driven Pizza World Tilemap...")
 
-    local map_width = 1000
-    local map_height = 1000
-    local spacing = 20.0
-    local offset_x = (map_width * spacing) / 2.0
-    local offset_z = (map_height * spacing) / 2.0
+    local MAP_WIDTH = 256
+    local MAP_HEIGHT = 256
+    local total_tiles = MAP_WIDTH * MAP_HEIGHT
 
-    -- 1. The Logical Map (The "Bitmap")
-    -- In the future, this can be populated by reading a PNG file!
-    local logical_map = ffi.new("float[?]", map_width * map_height)
+    -- Logical CPU State: Kept in fast, cache-aligned CPU RAM
+    memory.AllocateSoA("uint16_t", total_tiles, {"terrain_id", "elevation", "entity_id"})
 
-    for z = 0, map_height - 1 do
-        for x = 0, map_width - 1 do
-            local idx = z * map_width + x
-            local world_x = (x * spacing) - offset_x
-            local world_z = (z * spacing) - offset_z
-
-            -- Generate the height value
-            local hill_macro = math.sin(world_x * 0.002) * math.cos(world_z * 0.002) * 600.0
-            local hill_micro = math.sin(world_x * 0.008 + 1.5) * math.sin(world_z * 0.006) * 150.0
-
-            -- Store it in our logical SSoT array
-            logical_map[idx] = hill_macro + hill_micro
-        end
-    end
-
-    -- 2. Populate the Engine AVX2 Arrays from the Logical Map
-    for z = 0, map_height - 1 do
-        for x = 0, map_width - 1 do
-            local map_idx = z * map_width + x
-            local p_idx = map_idx -- Direct 1:1 mapping of map tiles to particles
-
-            if p_idx >= requested_count then break end
-
-            cpu_soa.seed[p_idx] = math.random()
-            cpu_soa.px[p_idx] = (x * spacing) - offset_x
-            cpu_soa.py[p_idx] = logical_map[map_idx] -- Read from the Map!
-            cpu_soa.pz[p_idx] = (z * spacing) - offset_z
-            cpu_soa.vx[p_idx] = 0.0
-            cpu_soa.vy[p_idx] = 0.0
-            cpu_soa.vz[p_idx] = 0.0
-        end
-    end
-
-    -- 4. Compile Geometry Indices into VRAM
-    print("[LUA CO] Compiling Geometry Indices to mapped VRAM...")
-    local idx_ptr = ffi.cast("uint32_t*", memory.Mapped["MASTER_INDEX_BLOCK"])
-    local indices = {
-        0,2,3, 0,3,4, 0,4,5, 0,5,2,
-        1,3,2, 1,4,3, 1,5,4, 1,2,5,
-        6,7,8, 6,8,9, 7,11,12, 7,12,8,
-        11,10,13, 11,13,12, 10,6,9, 10,9,13,
-        9,8,12, 9,12,13, 10,11,7, 10,7,6
+    local rts_grid = {
+        terrain = memory.AVX_Arrays["terrain_id"],
+        elevation = memory.AVX_Arrays["elevation"],
+        entity = memory.AVX_Arrays["entity_id"]
     }
-    for i, idx in ipairs(indices) do idx_ptr[i - 1] = idx end
-
-    -- 5. Boot the AVX2 Math Pool
-    local vmath_lib = ffi.load(jit.os == "Windows" and "bin/vx_math.dll" or "bin/libvx_math.so")
-    vmath_lib.vmath_init_workers(8)
-
     -- 6. Runtime State Initialization
     local MAX_DRAW_COMMANDS = 1024
     local render_queues = ffi.new("DrawCommand[?]", MAX_DRAW_COMMANDS * bp.cfg.frame_slots)
@@ -310,85 +263,37 @@ local function main()
             local dy = ffi.C.vx_input_mouse_dy()
             local wasd = ffi.C.vx_input_wasd()
 
-            -- [NEW] Camera Mode Toggle State
-            local is_isometric = pc.bg_color_b == 0xFF00AAFF -- We can use an unused push constant to hold state, or just a local var
+            -- 1. Strict Orthographic Zoom (Q/E)
+            local zoom_speed = move_speed * dt * 0.05
+            if bit.band(wasd, 16) ~= 0 then ortho_zoom = ortho_zoom - zoom_speed end
+            if bit.band(wasd, 32) ~= 0 then ortho_zoom = ortho_zoom + zoom_speed end
+            ortho_zoom = math.max(500.0, ortho_zoom)
 
-            local last_key = ffi.C.vx_input_last_key()
-            if last_key == bp.key.esc then ffi.C.vx_core_shutdown()
-            elseif last_key == bp.key.f5 then wants_hotswap = true
-            elseif last_key == bp.key.num1 then active_render_mode = bp.mode.dual
-            elseif last_key == bp.key.num2 then active_render_mode = bp.mode.geom
-            elseif last_key == bp.key.num3 then active_render_mode = bp.mode.points
-            elseif last_key == bp.key.num4 then
-                is_isometric = not is_isometric
-                print(is_isometric and "\n[LUA CO] Snap: ISOMETRIC PIZZA WORLD" or "\n[LUA CO] Snap: 3D FREE-CAM")
-            end
-
-            -- Store the state in the unused push constant to persist across frames
-            pc.bg_color_b = is_isometric and 0xFF00AAFF or 0xFF442211
-            pc.bg_color_a = active_render_mode
-
-            -- [NEW] Dynamic Projection Routing
-            local ortho_zoom = pc.spread * 100.0 -- Repurpose spread for zoom memory
             local aspect = sc.extent.width / math.max(1, sc.extent.height)
+            vmath.ortho_vk(-ortho_zoom * aspect, ortho_zoom * aspect, -ortho_zoom, ortho_zoom, -10000.0, 10000.0, proj)
 
-            if is_isometric then
-                -- Lock to pure isometric angles (Positive pitch looks DOWN in this engine)
-                cam_pitch = 0.6154  -- approx 35.264 degrees
-                cam_yaw = 0.7853    -- approx 45 degrees
+            -- 2. Locked Isometric Angles
+            local cam_yaw = 0.785398   -- 45 degrees
+            local cam_pitch = 0.615472 -- 35.264 degrees
 
-                -- Map Q/E to Orthographic Zoom instead of Y-Axis height
-                local zoom_speed = move_speed * dt * 0.05
-                if bit.band(wasd, 16) ~= 0 then ortho_zoom = ortho_zoom - zoom_speed end
-                if bit.band(wasd, 32) ~= 0 then ortho_zoom = ortho_zoom + zoom_speed end
-                ortho_zoom = math.max(500.0, ortho_zoom)
-                pc.spread = ortho_zoom / 100.0
-
-                -- Expanded Near/Far planes from 20k to 1 Million!
-                vmath.ortho_revz(-ortho_zoom * aspect, ortho_zoom * aspect, -ortho_zoom, ortho_zoom, -1000000.0, 1000000.0, proj)
-            else
-                -- 3D Free-Cam Input
-                cam_yaw = cam_yaw + (dx * sensitivity)
-                cam_pitch = math.max(-1.5, math.min(1.5, cam_pitch + (dy * sensitivity)))
-                vmath.perspective_inf_revz(70.0, aspect, 0.1, proj)
-            end
-
-            -- Base directional vectors (PURE - strictly for vmath.lookAt)
-            local fwd_x = math.sin(cam_yaw) * math.cos(cam_pitch)
-            local fwd_y = -math.sin(cam_pitch)
-            local fwd_z = math.cos(cam_yaw) * math.cos(cam_pitch)
+            -- 3. Planar Movement Vectors (X/Z only)
+            local fwd_x = math.sin(cam_yaw)
+            local fwd_z = math.cos(cam_yaw)
             local right_x = math.cos(cam_yaw)
             local right_z = -math.sin(cam_yaw)
 
-            -- [NEW] Movement directional vectors (FLATTENED - strictly for WASD)
-            local move_fwd_x = fwd_x
-            local move_fwd_y = fwd_y
-            local move_fwd_z = fwd_z
-
-            if is_isometric then
-                -- Flatten movement to the XZ ground plane, but leave fwd_y alone!
-                move_fwd_x = math.sin(cam_yaw)
-                move_fwd_y = 0.0
-                move_fwd_z = math.cos(cam_yaw)
-            end
-
             local frame_speed = move_speed * dt
-            -- Apply move_fwd for W and S
-            if bit.band(wasd, 1) ~= 0 then cam_pos.x = cam_pos.x + move_fwd_x * frame_speed; cam_pos.y = cam_pos.y + move_fwd_y * frame_speed; cam_pos.z = cam_pos.z + move_fwd_z * frame_speed end
-            if bit.band(wasd, 2) ~= 0 then cam_pos.x = cam_pos.x - move_fwd_x * frame_speed; cam_pos.y = cam_pos.y - move_fwd_y * frame_speed; cam_pos.z = cam_pos.z - move_fwd_z * frame_speed end
-            -- Apply right vector for A and D
+            if bit.band(wasd, 1) ~= 0 then cam_pos.x = cam_pos.x + fwd_x * frame_speed; cam_pos.z = cam_pos.z + fwd_z * frame_speed end
+            if bit.band(wasd, 2) ~= 0 then cam_pos.x = cam_pos.x - fwd_x * frame_speed; cam_pos.z = cam_pos.z - fwd_z * frame_speed end
             if bit.band(wasd, 4) ~= 0 then cam_pos.x = cam_pos.x - right_x * frame_speed; cam_pos.z = cam_pos.z - right_z * frame_speed end
             if bit.band(wasd, 8) ~= 0 then cam_pos.x = cam_pos.x + right_x * frame_speed; cam_pos.z = cam_pos.z + right_z * frame_speed end
 
-            -- Only allow free Y-axis translation in 3D mode
-            if not is_isometric then
-                if bit.band(wasd, 16) ~= 0 then cam_pos.y = cam_pos.y + frame_speed end
-                if bit.band(wasd, 32) ~= 0 then cam_pos.y = cam_pos.y - frame_speed end
-            end
+            -- 4. Locked Look Vector
+            local look_x = math.sin(cam_yaw) * math.cos(cam_pitch)
+            local look_y = -math.sin(cam_pitch)
+            local look_z = math.cos(cam_yaw) * math.cos(cam_pitch)
 
-            -- lookAt perfectly maintains the downward angle!
-            vmath.lookAt(cam_pos.x, cam_pos.y, cam_pos.z, cam_pos.x + fwd_x, cam_pos.y + fwd_y, cam_pos.z + fwd_z, view)
-
+            vmath.lookAt(cam_pos.x, cam_pos.y, cam_pos.z, cam_pos.x + look_x, cam_pos.y + look_y, cam_pos.z + look_z, view)
             -- Time & Matrix pushes
             pc.dt = pc.dt + dt
             total_time = total_time + dt
@@ -523,7 +428,8 @@ local function main()
                 cmd0.topology = geom_cfg.topology
                 cmd0.depth_test = geom_cfg.depth_test
                 cmd0.depth_write = geom_cfg.depth_write
-                cmd0.depth_compare_op = 4
+                -- REPLACE cmd0.depth_compare_op = 4 WITH:
+                cmd0.depth_compare_op = geom_cfg.depth_compare_op
 
                 -- Render Points Pass (From Boilerplate)
                 local cmd1 = current_queue_ptr[1]
@@ -549,7 +455,8 @@ local function main()
                 cmd1.topology = points_cfg.topology
                 cmd1.depth_test = points_cfg.depth_test
                 cmd1.depth_write = points_cfg.depth_write
-                cmd1.depth_compare_op = 4
+                -- REPLACE cmd1.depth_compare_op = 4 WITH:
+                cmd1.depth_compare_op = points_cfg.depth_compare_op
 
                 if active_render_mode == bp.mode.dual then
                     cmd0.first_instance = 0
