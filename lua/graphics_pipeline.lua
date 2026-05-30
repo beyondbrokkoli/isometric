@@ -1,6 +1,6 @@
 local ffi = require("ffi")
 local bit = require("bit")
-local reg = require("boilerplate") -- LOBOTOMY: SSoT target
+local reg = require("registry_vk")
 local vk_struct, vk_shader = reg.vk_struct, reg.vk_shader_stage
 local vk_state, vk_pipeline, vk_dynamic = reg.vk_state, reg.vk_pipeline, reg.vk_dynamic
 local vk_format, vk_image, vk_layout = reg.vk_format, reg.vk_image, reg.vk_layout

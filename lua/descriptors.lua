@@ -1,6 +1,7 @@
 local ffi = require("ffi")
 local bit = require("bit")
-local reg = require("boilerplate") -- LOBOTOMY: Redirect to SSoT
+local reg = require("registry_vk")
+local config = require("config_engine")
 local vk_desc, vk_struct, vk_shader = reg.vk_desc, reg.vk_struct, reg.vk_shader_stage
 
 local Descriptors = {}
@@ -31,7 +32,7 @@ function Descriptors.Init(vk, device, master_gpu_buffer)
     local pushRange = ffi.new("VkPushConstantRange[1]")
     pushRange[0].stageFlags = STAGE_ALL
     pushRange[0].offset = 0
-    pushRange[0].size = reg.cfg.pc_size -- EXTRACTION: No more magic numbers!
+    pushRange[0].size = config.cfg.pc_size
 
     -- 3. Pipeline Layout (Unified Router)
     local pipeLayoutInfo = ffi.new("VkPipelineLayoutCreateInfo")

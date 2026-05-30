@@ -1,5 +1,5 @@
 local ffi = require("ffi")
-local reg = require("boilerplate") -- LOBOTOMY: SSoT Target
+local reg = require("registry_vk")
 local vk_struct = reg.vk_struct
 
 local Renderer = {}

@@ -1,5 +1,6 @@
 local ffi = require("ffi")
-local reg = require("boilerplate") -- LOBOTOMY: Target the SSoT
+
+local reg = require("registry_vk")
 local vk_struct, vk_shader = reg.vk_struct, reg.vk_shader_stage
 
 local ComputePipeline = {}
@@ -24,28 +25,20 @@ local function CreateShaderModule(vk, device, filename)
     return pMod[0]
 end
 
--- LOBOTOMY: Accept the dynamic 'configs' table
 function ComputePipeline.Init(vk, device, pipelineLayout, configs)
     local count = #configs
     print(string.format("[COMPUTE] Forging %d-Pass Compute Shaders...", count))
 
-    -- [NEW] Early exit for pure graphics engines
     if count == 0 then
-        return {
-            pipelineLayout = pipelineLayout,
-            pipelines = {},
-            modules = {}
-        }
+        return { pipelineLayout = pipelineLayout, pipelines = {}, modules = {} }
     end
 
-    -- Dynamically size the C-arrays
     local pipelineInfos = ffi.new("VkComputePipelineCreateInfo[?]", count)
     local modules = {}
 
     for i, cfg in ipairs(configs) do
         local mod = CreateShaderModule(vk, device, cfg.file)
         modules[i] = mod
-
         pipelineInfos[i-1].sType = vk_struct.compute_pipeline_create
         pipelineInfos[i-1].layout = pipelineLayout
         pipelineInfos[i-1].stage.sType = vk_struct.pipeline_shader_stage_create
@@ -57,13 +50,7 @@ function ComputePipeline.Init(vk, device, pipelineLayout, configs)
     local pPipelines = ffi.new("VkPipeline[?]", count)
     assert(vk.vkCreateComputePipelines(device, nil, count, pipelineInfos, nil, pPipelines) == 0)
 
-    -- Build a dynamic, named dictionary to return
-    local state = {
-        pipelineLayout = pipelineLayout,
-        pipelines = {},
-        modules = {}
-    }
-
+    local state = { pipelineLayout = pipelineLayout, pipelines = {}, modules = {} }
     for i, cfg in ipairs(configs) do
         state.pipelines[cfg.name] = pPipelines[i-1]
         state.modules[cfg.name] = modules[i]
@@ -76,14 +63,8 @@ function ComputePipeline.Destroy(vk, core_state, comp_state)
     print("[TEARDOWN] Dismantling Compute Graph Pipelines...")
     if not comp_state or not core_state then return end
     local device = core_state.device
-
-    -- Dynamically iterate and destroy, no more hardcoded if-statements!
-    for _, pipe in pairs(comp_state.pipelines) do
-        vk.vkDestroyPipeline(device, pipe, nil)
-    end
-    for _, mod in pairs(comp_state.modules) do
-        vk.vkDestroyShaderModule(device, mod, nil)
-    end
+    for _, pipe in pairs(comp_state.pipelines) do vk.vkDestroyPipeline(device, pipe, nil) end
+    for _, mod in pairs(comp_state.modules) do vk.vkDestroyShaderModule(device, mod, nil) end
 end
 
 return ComputePipeline
