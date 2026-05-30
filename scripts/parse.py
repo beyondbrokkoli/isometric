@@ -49,6 +49,7 @@ TARGET_FUNCTIONS = {
 
     # Swapchain & Sync
     "vkCreateSemaphore", "vkDestroySemaphore", "vkRenderingAttachementInfoKHR",
+    "vkWaitSemaphores", "vkSignalSemaphore", "vkGetSemaphoreCounterValue",
     "vkAcquireNextImageKHR", "vkCreateSwapchainKHR", "vkDestroySwapchainKHR", "vkQueuePresentKHR",
     "vkGetPhysicalDeviceSurfaceCapabilitiesKHR", "vkGetSwapchainImagesKHR", "vkCreateImageView",
     "vkDestroyImageView", "vkDestroySurfaceKHR",
@@ -359,7 +360,7 @@ def generate_lua_ffi_cdef(xml_path):
     return ffi_declarations, lua_64_constants ### PUT IT HERE?
 
 if __name__ == "__main__":
-    output_filename = "vulkan_headers.lua"
+    output_filename = "lua/vulkan_headers.lua"
 
     with open(output_filename, "w") as f:
         # --- LUA MODULE HEADER ---

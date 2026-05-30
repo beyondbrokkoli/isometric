@@ -14,6 +14,12 @@ ffi.cdef[[
     const char** vx_sys_glfw_extensions(uint32_t* count);
     void vx_sys_inject_validation(void* instance);
     void vx_sys_eject_validation(void* instance);
+
+    typedef struct {
+        uint32_t sType;
+        void* pNext;
+        uint32_t timelineSemaphore;
+    } VkPhysicalDeviceTimelineSemaphoreFeatures;
 ]]
 
 local vk
@@ -98,22 +104,45 @@ function core.finalize_device_and_swapchain(vk_state, surface_ptr, req_extension
     vk.vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, pQueueFamilyCount, queueFamilies)
 
     local qIndex = -1
+    local tIndex = -1
+
     for i = 0, pQueueFamilyCount[0] - 1 do
-        if bit.band(queueFamilies[i].queueFlags, vk_queue.graphics) ~= 0 then
+        local flags = queueFamilies[i].queueFlags
+        -- Find Graphics Queue
+        if bit.band(flags, vk_queue.graphics) ~= 0 and qIndex == -1 then
             qIndex = i
-            break
+        end
+        -- Find Dedicated Transfer Queue (Has Transfer, NO Graphics)
+        if bit.band(flags, vk_queue.transfer) ~= 0 and bit.band(flags, vk_queue.graphics) == 0 then
+            tIndex = i
         end
     end
-    assert(qIndex ~= -1, "FATAL: Could not find a Graphics queue!")
+
+    if tIndex == -1 then
+        print("[LUA] No dedicated Transfer queue found. Sharing Graphics queue.")
+        tIndex = qIndex
+    else
+        print("[LUA] Dedicated Transfer queue located at index: " .. tIndex)
+    end
+
     vk_state.qIndex = qIndex
+    vk_state.tIndex = tIndex
 
     local queuePriority = ffi.new("float[1]", 1.0)
-    local queueCreateInfo = ffi.new("VkDeviceQueueCreateInfo", {
-        sType = vk_struct.device_queue_create,
-        queueFamilyIndex = qIndex,
-        queueCount = 1,
-        pQueuePriorities = queuePriority
-    })
+    local queueCount = (qIndex == tIndex) and 1 or 2
+    local queueCreateInfos = ffi.new("VkDeviceQueueCreateInfo[2]")
+
+    queueCreateInfos[0].sType = vk_struct.device_queue_create
+    queueCreateInfos[0].queueFamilyIndex = qIndex
+    queueCreateInfos[0].queueCount = 1
+    queueCreateInfos[0].pQueuePriorities = queuePriority
+
+    if queueCount == 2 then
+        queueCreateInfos[1].sType = vk_struct.device_queue_create
+        queueCreateInfos[1].queueFamilyIndex = tIndex
+        queueCreateInfos[1].queueCount = 1
+        queueCreateInfos[1].pQueuePriorities = queuePriority
+    end
 
     local ext_count = #req_extensions
     local deviceExtensions = ffi.new("const char*[?]", ext_count)
@@ -136,6 +165,12 @@ function core.finalize_device_and_swapchain(vk_state, surface_ptr, req_extension
     extDynamicState2.pNext = extDynamicState
     extDynamicState2.extendedDynamicState2 = 1
 
+    -- [NEW] Inject Timeline Semaphores into the chain
+    local timelineFeat = ffi.new("VkPhysicalDeviceTimelineSemaphoreFeatures")
+    timelineFeat.sType = 1000207000 -- VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES
+    timelineFeat.timelineSemaphore = 1
+    timelineFeat.pNext = extDynamicState2 -- Chain it!
+
     local deviceFeatures = ffi.new("VkPhysicalDeviceFeatures")
     ffi.fill(deviceFeatures, ffi.sizeof(deviceFeatures))
     deviceFeatures.largePoints = 1
@@ -143,22 +178,30 @@ function core.finalize_device_and_swapchain(vk_state, surface_ptr, req_extension
     local deviceCreateInfo = ffi.new("VkDeviceCreateInfo")
     ffi.fill(deviceCreateInfo, ffi.sizeof(deviceCreateInfo))
     deviceCreateInfo.sType = vk_struct.device_create
-    deviceCreateInfo.pNext = extDynamicState2
-    deviceCreateInfo.queueCreateInfoCount = 1
-    deviceCreateInfo.pQueueCreateInfos = queueCreateInfo
-    deviceCreateInfo.enabledExtensionCount = ext_count
+    deviceCreateInfo.pNext = timelineFeat -- Point head of chain here
+
+    -- [NEW] Provide the dynamic queue structures
+    deviceCreateInfo.queueCreateInfoCount = queueCount;
+    deviceCreateInfo.pQueueCreateInfos = queueCreateInfos;
+    deviceCreateInfo.enabledExtensionCount = ext_count;
+
     deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions
     deviceCreateInfo.pEnabledFeatures = deviceFeatures
 
     local pDevice = ffi.new("VkDevice[1]")
     assert(vk.vkCreateDevice(physicalDevice, deviceCreateInfo, nil, pDevice) == 0, "FATAL: vkCreateDevice failed!")
- 
+
     vk_state.device = pDevice[0]
     print("[LUA] Logical Device Created!")
 
     local pQueue = ffi.new("VkQueue[1]")
     vk.vkGetDeviceQueue(vk_state.device, qIndex, 0, pQueue)
     vk_state.queue = pQueue[0]
+
+    -- [NEW] Extract the Transfer Queue
+    local pTransferQueue = ffi.new("VkQueue[1]")
+    vk.vkGetDeviceQueue(vk_state.device, tIndex, 0, pTransferQueue)
+    vk_state.transferQueue = pTransferQueue[0]
 
     return vk_state
 end

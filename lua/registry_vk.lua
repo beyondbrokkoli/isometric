@@ -1,5 +1,5 @@
 local ffi = require("ffi")
-require("vulkan_headers") -- [NEW] Teach FFI what a VkDevice is before parsing!
+require("vulkan_headers")
 
 local reg = {
     vk_queue = { graphics = 1, compute = 2, transfer = 4 },
@@ -39,33 +39,10 @@ local reg = {
             "VK_EXT_extended_dynamic_state", "VK_EXT_extended_dynamic_state2"
         }
     },
-    c_math_structs = [[
-        typedef struct { float m[16]; } mat4_t;
-        typedef struct { float px, py, pz; uint32_t tile_data; } RtsTileInstance;
-        typedef struct {
-            mat4_t viewProj; uint32_t soa_upload_idx; uint32_t aos_current_idx;
-            uint32_t aos_prev_idx; uint32_t particle_count; float dt;
-            float total_time; uint32_t target_state;
-        } PushConstants;
-        typedef struct {
-            uint64_t pipeline_id; uint64_t descriptor_set; uint32_t index_count;
-            uint32_t instance_count; uint32_t first_index; int32_t vertex_offset;
-            uint32_t first_instance; uint16_t pc_offset; uint16_t pc_size;
-            uint8_t push_constants[128]; int16_t scissor_x; int16_t scissor_y;
-            uint16_t scissor_w; uint16_t scissor_h; uint8_t cull_mode;
-            uint8_t depth_test; uint8_t depth_write; uint8_t depth_compare_op;
-            uint8_t front_face; uint8_t topology; uint8_t _reserved[10];
-        } DrawCommand;
-        typedef struct __attribute__((packed, aligned(64))) {
-            DrawCommand* draw_queue; uint32_t draw_count; uint32_t _pad_draw[3];
-            uint64_t gfx_layout; uint64_t vertex_buffer; uint64_t index_buffer;
-            uint64_t swapchain_image; uint64_t swapchain_view; uint64_t depth_image;
-            uint64_t depth_view; uint32_t width; uint32_t height; uint8_t _padding[32];
-        } RenderPacket;
-    ]],
+    -- [RESTORED] Vulkan Host Interface
     c_vk_structs = [[
         typedef struct {
-            VkDevice device; VkQueue queue; VkSwapchainKHR swapchain;
+            VkDevice device; VkQueue queue; VkQueue transfer_queue; VkSwapchainKHR swapchain;
             uint64_t swapchain_images[10]; uint64_t swapchain_views[10];
             VkSemaphore image_available[10]; VkSemaphore render_finished[10];
             VkFence in_flight[10]; void* vkWaitForFences; void* vkAcquireNextImageKHR;
@@ -74,10 +51,124 @@ local reg = {
             void* pfnSetPrimitiveTopology; void* pfnSetDepthTestEnable;
             void* pfnSetDepthWriteEnable; void* pfnSetDepthCompareOp;
         } RenderThreadInit;
-    ]]
+    ]],
+    -- [NEW] Data-Driven Schema
+    structs = {
+        {
+            name = "mat4_t", glsl = "mat4", align = 16,
+            members = { { type = "float", name = "m", count = 16 } }
+        },
+        {
+            name = "RtsTileInstance", glsl = "RtsTileInstance", align = 16,
+            members = {
+                { type = "float", name = "px" },
+                { type = "float", name = "py" },
+                { type = "float", name = "pz" },
+                { type = "uint32_t", name = "tile_data" }
+            }
+        },
+        {
+            name = "PushConstants", glsl = "PushConstants", align = 16,
+            members = {
+                { type = "mat4_t", name = "viewProj" },
+                { type = "uint32_t", name = "soa_upload_idx" },
+                { type = "uint32_t", name = "aos_current_idx" },
+                { type = "uint32_t", name = "aos_prev_idx" },
+                { type = "uint32_t", name = "particle_count" },
+                { type = "float", name = "dt" },
+                { type = "float", name = "total_time" },
+                { type = "uint32_t", name = "target_state" }
+            }
+        },
+        {
+            name = "DrawCommand", c_only = true, align = 8,
+            members = {
+                { type = "uint64_t", name = "pipeline_id" },
+                { type = "uint64_t", name = "descriptor_set" },
+                { type = "uint32_t", name = "index_count" },
+                { type = "uint32_t", name = "instance_count" },
+                { type = "uint32_t", name = "first_index" },
+                { type = "int32_t", name = "vertex_offset" },
+                { type = "uint32_t", name = "first_instance" },
+                { type = "uint16_t", name = "pc_offset" },
+                { type = "uint16_t", name = "pc_size" },
+                { type = "uint8_t", name = "push_constants", count = 128 },
+                { type = "int16_t", name = "scissor_x" },
+                { type = "int16_t", name = "scissor_y" },
+                { type = "uint16_t", name = "scissor_w" },
+                { type = "uint16_t", name = "scissor_h" },
+                { type = "uint8_t", name = "cull_mode" },
+                { type = "uint8_t", name = "depth_test" },
+                { type = "uint8_t", name = "depth_write" },
+                { type = "uint8_t", name = "depth_compare_op" },
+                { type = "uint8_t", name = "front_face" },
+                { type = "uint8_t", name = "topology" }
+            }
+        },
+        {
+            name = "RenderPacket", c_only = true, align = 64, force_align = true,
+            members = {
+                { type = "DrawCommand*", name = "draw_queue" },
+                { type = "uint32_t", name = "draw_count" },
+                { type = "uint64_t", name = "gfx_layout" },
+                { type = "uint64_t", name = "vertex_buffer" },
+                { type = "uint64_t", name = "index_buffer" },
+                { type = "uint64_t", name = "swapchain_image" },
+                { type = "uint64_t", name = "swapchain_view" },
+                { type = "uint64_t", name = "depth_image" },
+                { type = "uint64_t", name = "depth_view" },
+                { type = "uint32_t", name = "width" },
+                { type = "uint32_t", name = "height" }
+            }
+        }
+    }
 }
 
-ffi.cdef(reg.c_math_structs)
-ffi.cdef(reg.c_vk_structs)
+-- [NEW] Dynamic FFI Bootstrapper
+local function get_base_size(type_str)
+    if string.find(type_str, "64") or string.find(type_str, "*") then return 8 end
+    if string.find(type_str, "32") or type_str == "float" then return 4 end
+    if string.find(type_str, "16") then return 2 end
+    if string.find(type_str, "8") then return 1 end
+    return 64 -- mat4_t fallback
+end
+
+local cdef_builder = ""
+for _, struct in ipairs(reg.structs) do
+    local attr = struct.force_align and "__attribute__((packed, aligned("..struct.align..")))" or "__attribute__((packed))"
+    cdef_builder = cdef_builder .. string.format("typedef struct %s {\n", attr)
+
+    local offset = 0
+    local pad_id = 0
+    for _, m in ipairs(struct.members) do
+        local m_size = get_base_size(m.type)
+
+        -- Strict Padding Injection (FFI Side)
+        local rem = offset % m_size
+        if rem ~= 0 then
+            local pad_bytes = m_size - rem
+            cdef_builder = cdef_builder .. string.format("    uint8_t _pad_%d[%d];\n", pad_id, pad_bytes)
+            offset = offset + pad_bytes
+            pad_id = pad_id + 1
+        end
+
+        local arr = m.count and string.format("[%d]", m.count) or ""
+        cdef_builder = cdef_builder .. string.format("    %s %s%s;\n", m.type, m.name, arr)
+        offset = offset + (m_size * (m.count or 1))
+    end
+
+    -- Tail padding for struct alignment
+    local tail_rem = offset % struct.align
+    if tail_rem ~= 0 then
+        local tail_pad = struct.align - tail_rem
+        cdef_builder = cdef_builder .. string.format("    uint8_t _pad_tail[%d];\n", tail_pad)
+    end
+
+    cdef_builder = cdef_builder .. "} " .. struct.name .. ";\n\n"
+end
+
+-- Append the raw Vulkan interfaces for FFI parsing
+cdef_builder = cdef_builder .. reg.c_vk_structs
+ffi.cdef(cdef_builder)
 
 return reg

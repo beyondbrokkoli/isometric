@@ -275,6 +275,7 @@ EXPORT int vx_input_spacebar() {
     return atomic_load_explicit(&g_engine.mailbox.key_space, memory_order_acquire);
 }
 
+
 #define RING_SIZE 4
 #define LOAD(var) atomic_load_explicit(&(var), memory_order_acquire)
 #define STORE(var, val) atomic_store_explicit(&(var), (val), memory_order_release)
@@ -291,6 +292,125 @@ static RenderRing g_ring = { .ready_idx = -1, .locked_mask = 0 };
 static RenderThreadInit g_wsi;
 static vmath_thread_t g_render_thread;
 static atomic_int g_render_thread_active = 0;
+
+// [NEW] Global Command Pool Tracking
+static VkCommandPool g_render_cmd_pool = VK_NULL_HANDLE;
+static VkCommandPool g_transfer_cmd_pool = VK_NULL_HANDLE;
+
+// DIRECTIVE ZETA: ASYNC TRANSFER OVERLORD
+typedef struct {
+    uint64_t src_buffer;
+    uint64_t dst_buffer;
+    uint64_t size;
+    uint64_t timeline_sem;
+    uint64_t signal_val;
+    alignas(64) _Atomic int status; // 0 = FREE, 1 = PENDING, 2 = COMPLETE
+} TransferJob;
+
+#define TRANSFER_RING_SIZE 4
+static TransferJob g_transfer_ring[TRANSFER_RING_SIZE];
+static uint32_t g_transfer_family_idx = 0;
+static vmath_thread_t g_transfer_thread;
+static atomic_int g_transfer_thread_active = 0;
+
+EXPORT void vx_transfer_setup(uint32_t q_family_index) {
+    g_transfer_family_idx = q_family_index;
+    for(int i = 0; i < TRANSFER_RING_SIZE; i++) {
+        atomic_init(&g_transfer_ring[i].status, 0);
+    }
+}
+
+EXPORT int vx_transfer_request(uint64_t src, uint64_t dst, uint64_t size, uint64_t t_sem, uint64_t sig_val) {
+    for(int i = 0; i < TRANSFER_RING_SIZE; i++) {
+        int expected = 0; // FREE
+        if (atomic_compare_exchange_strong_explicit(&g_transfer_ring[i].status, &expected, 1, memory_order_acquire, memory_order_relaxed)) {
+            g_transfer_ring[i].src_buffer = src;
+            g_transfer_ring[i].dst_buffer = dst;
+            g_transfer_ring[i].size = size;
+            g_transfer_ring[i].timeline_sem = t_sem;
+            g_transfer_ring[i].signal_val = sig_val;
+
+            // Mark as PENDING for the transfer thread to pick up
+            atomic_store_explicit(&g_transfer_ring[i].status, 2, memory_order_release);
+            return 1;
+        }
+    }
+    return 0; // Mailbox full, Lua must yield
+}
+
+THREAD_FUNC transfer_thread_loop(void* arg) {
+    printf("[C-CORE] Async Transfer Overlord Online.\n");
+
+    VkCommandPool cmd_pool;
+    VkCommandPoolCreateInfo pool_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = g_transfer_family_idx // Strict Domain Isolation
+    };
+    // Replace the local pool declaration
+    vkCreateCommandPool(g_wsi.device, &pool_info, NULL, &g_transfer_cmd_pool);
+
+    VkCommandBuffer cmd;
+    VkCommandBufferAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = g_transfer_cmd_pool, // Use the global
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1
+    };
+    vkAllocateCommandBuffers(g_wsi.device, &alloc_info, &cmd);
+
+    PFN_vkQueueSubmit pfnSubmit = (PFN_vkQueueSubmit)g_wsi.vkQueueSubmit;
+
+    while (atomic_load_explicit(&g_transfer_thread_active, memory_order_acquire) && atomic_load_explicit(&g_engine.mailbox.is_running, memory_order_acquire)) {
+        bool worked = false;
+
+        for(int i = 0; i < TRANSFER_RING_SIZE; i++) {
+            if (atomic_load_explicit(&g_transfer_ring[i].status, memory_order_acquire) == 2) {
+                TransferJob* job = &g_transfer_ring[i];
+
+                vkResetCommandBuffer(cmd, 0);
+                VkCommandBufferBeginInfo beginInfo = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+                vkBeginCommandBuffer(cmd, &beginInfo);
+
+                // Hardware DMA Copy Command
+                VkBufferCopy copyRegion = { .srcOffset = 0, .dstOffset = 0, .size = job->size };
+                vkCmdCopyBuffer(cmd, (VkBuffer)job->src_buffer, (VkBuffer)job->dst_buffer, 1, &copyRegion);
+
+                vkEndCommandBuffer(cmd);
+
+                // Vulkan 1.2 Timeline Linkage
+                VkTimelineSemaphoreSubmitInfo timelineInfo = {
+                    .sType = 1000207003, // VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO
+                    .signalSemaphoreValueCount = 1,
+                    .pSignalSemaphoreValues = &job->signal_val
+                };
+
+                VkSubmitInfo submitInfo = {
+                    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                    .pNext = &timelineInfo,
+                    .commandBufferCount = 1,
+                    .pCommandBuffers = &cmd,
+                    .signalSemaphoreCount = 1,
+                    .pSignalSemaphores = (VkSemaphore*)&job->timeline_sem
+                };
+
+                // Submit directly to the dedicated Transfer Queue!
+                pfnSubmit(g_wsi.transfer_queue, 1, &submitInfo, VK_NULL_HANDLE);
+
+                // Free the mailbox slot immediately.
+                // Lua checks the Semaphore value, not this mailbox, to know when it's done!
+                atomic_store_explicit(&job->status, 0, memory_order_release);
+                worked = true;
+            }
+        }
+
+        // Zero-overhead sleep if no jobs exist
+        if (!worked) SLEEP_MS(1);
+    }
+
+    printf("[C-CORE] Async Transfer Thread gracefully terminated.\n");
+    return NULL;
+}
 
 EXPORT void vx_stream_init(RenderThreadInit* wsi) {
     g_wsi = *wsi;
@@ -472,12 +592,13 @@ THREAD_FUNC render_thread_loop(void* arg) {
         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
         .queueFamilyIndex = 0 // Assuming Graphics queue index is 0 in your setup
     };
-    vkCreateCommandPool(g_wsi.device, &pool_info, NULL, &cmd_pool);
+    // Replace the local pool declaration
+    vkCreateCommandPool(g_wsi.device, &pool_info, NULL, &g_render_cmd_pool);
 
     VkCommandBuffer cmd_buffers[3];
     VkCommandBufferAllocateInfo alloc_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool = cmd_pool,
+        .commandPool = g_render_cmd_pool, // Use the global
         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = 3
     };
@@ -583,23 +704,43 @@ THREAD_FUNC render_thread_loop(void* arg) {
         current_frame = (current_frame + 1) % 3;
 
     }
-    vkDeviceWaitIdle(g_wsi.device);
-    vkFreeCommandBuffers(g_wsi.device, cmd_pool, 3, cmd_buffers);
-    vkDestroyCommandPool(g_wsi.device, cmd_pool, NULL);
+
     printf("[C-CORE] Async Render Thread gracefully terminated and pool destroyed.\n");
     return NULL;
 }
 
 EXPORT void vx_thread_start() {
     atomic_store_explicit(&g_render_thread_active, 1, memory_order_release);
+    atomic_store_explicit(&g_transfer_thread_active, 1, memory_order_release);
     g_render_thread = vmath_thread_start(render_thread_loop, NULL);
+    g_transfer_thread = vmath_thread_start(transfer_thread_loop, NULL);
 }
 
 EXPORT void vx_thread_kill() {
+    // 1. Signal threads to stop
     atomic_store_explicit(&g_render_thread_active, 0, memory_order_release);
-    vmath_thread_join(g_render_thread); // This physically pauses Lua until the C-thread exits cleanly!
-    printf("[C-CORE] Async Render Thread gracefully terminated for rebuild.\n");
+    atomic_store_explicit(&g_transfer_thread_active, 0, memory_order_release);
+
+    // 2. Wait for them to physically exit
+    vmath_thread_join(g_render_thread);
+    vmath_thread_join(g_transfer_thread);
+
+    // 3. NOW it is 100% safe to lock the device
+    vkDeviceWaitIdle(g_wsi.device);
+
+    // 4. Sweep memory
+    if (g_render_cmd_pool) {
+        vkDestroyCommandPool(g_wsi.device, g_render_cmd_pool, NULL);
+        g_render_cmd_pool = VK_NULL_HANDLE;
+    }
+    if (g_transfer_cmd_pool) {
+        vkDestroyCommandPool(g_wsi.device, g_transfer_cmd_pool, NULL);
+        g_transfer_cmd_pool = VK_NULL_HANDLE;
+    }
+
+    printf("[C-CORE] Async Threads joined, Device idled, and Pools destroyed.\n");
 }
+
 void vx_init_mailbox() {
     atomic_init(&g_engine.mailbox.ready_index, 0);
     atomic_init(&g_engine.mailbox.is_running, 1);

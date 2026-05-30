@@ -94,6 +94,7 @@ seq.boot = {
             local wsi = ffi.new("RenderThreadInit")
             wsi.device = dev
             wsi.queue = ctx.vk_runtime.queue
+            wsi.transfer_queue = ctx.vk_runtime.transferQueue -- [NEW] Handoff to Async Thread
             wsi.swapchain = sc.handle
 
             for i = 0, sc.imageCount - 1 do
@@ -124,7 +125,13 @@ seq.boot = {
             ffi.cdef[[
                 void vx_stream_init(RenderThreadInit* wsi);
                 void vx_thread_start();
+
+                void vx_transfer_setup(uint32_t q_family_index);
+                int vx_transfer_request(uint64_t src, uint64_t dst, uint64_t size, uint64_t t_sem, uint64_t sig_val);
             ]]
+
+            -- Init the Mailbox with the correct hardware lane index
+            ffi.C.vx_transfer_setup(ctx.vk_runtime.tIndex)
 
             ffi.C.vx_stream_init(wsi)
             ffi.C.vx_thread_start()

@@ -13,6 +13,37 @@ local temp_u = ffi.new("vec4_t")
 local temp_r = ffi.new("vec4_t")
 local temp_mat = ffi.new("mat4_t")
 
+-- Constants precomputed for Yaw 45, Pitch 35.264
+local C_THETA = 0.70710678 -- cos(45)
+local S_THETA = 0.70710678 -- sin(45)
+local S_PHI = 0.57735026   -- sin(35.264)
+local INV_S_PHI = 1.7320508 -- 1.0 / sin(35.264)
+
+function vmath.screen_to_grid(mouse_x, mouse_y, screen_w, screen_h, cam_pos, ortho_zoom, spacing, offset_x, offset_z)
+    -- 1. Normalize mouse to NDC [-1, 1]
+    local ndc_x = (mouse_x / screen_w) * 2.0 - 1.0
+    local ndc_y = (mouse_y / screen_h) * 2.0 - 1.0
+
+    -- 2. Scale by orthographic zoom and aspect ratio
+    local aspect = screen_w / screen_h
+    local view_x = ndc_x * (ortho_zoom * aspect)
+    local view_y = ndc_y * ortho_zoom
+
+    -- 3. Invert the 2x2 system to find World X and Z
+    -- X_w = (X_scr / C_theta + Y_scr / (S_theta * S_phi)) / 2
+    local world_x = cam_pos.x + (view_x / C_THETA + (view_y * INV_S_PHI) / S_THETA) * 0.5
+    local world_z = cam_pos.z + ((view_y * INV_S_PHI) / C_THETA - view_x / S_THETA) * 0.5
+
+    -- 4. Snap to 1D SoA Index
+    local grid_x = math.floor((world_x + offset_x) / spacing)
+    local grid_z = math.floor((world_z + offset_z) / spacing)
+
+    if grid_x >= 0 and grid_x < MAP_WIDTH and grid_z >= 0 and grid_z < MAP_HEIGHT then
+        return grid_z * MAP_WIDTH + grid_x
+    end
+    return -1 -- Out of bounds
+end
+
 function vmath.lookAt(eye_x, eye_y, eye_z, center_x, center_y, center_z, out_mat)
     temp_f.x = center_x - eye_x
     temp_f.y = center_y - eye_y
@@ -49,7 +80,7 @@ function vmath.lookAt(eye_x, eye_y, eye_z, center_x, center_y, center_z, out_mat
     out_mat.m[0] = temp_r.x;  out_mat.m[1] = temp_u.x;  out_mat.m[2] = -temp_f.x;  out_mat.m[3] = 0.0;
     out_mat.m[4] = temp_r.y;  out_mat.m[5] = temp_u.y;  out_mat.m[6] = -temp_f.y;  out_mat.m[7] = 0.0;
     out_mat.m[8] = temp_r.z;  out_mat.m[9] = temp_u.z;  out_mat.m[10] = -temp_f.z; out_mat.m[11] = 0.0;
-    
+
     out_mat.m[12] = -(temp_r.x*eye_x + temp_r.y*eye_y + temp_r.z*eye_z)
     out_mat.m[13] = -(temp_u.x*eye_x + temp_u.y*eye_y + temp_u.z*eye_z)
     out_mat.m[14] = (temp_f.x*eye_x + temp_f.y*eye_y + temp_f.z*eye_z)

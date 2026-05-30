@@ -171,7 +171,6 @@ local function main()
     local cam_pos = {x = 0.0, y = 0.0, z = 0.0}
     local move_speed = 4000.0
 
-    local last_time = get_time_hires()
     local total_time = 0.0
     local wants_hotswap = false
 
@@ -182,7 +181,36 @@ local function main()
     local last_resize_time = get_time_hires()
     local RESIZE_COOLDOWN = 0.25
 
-    print("[LUA CO] Entering Data-Driven Render Loop...")
+    local last_time = get_time_hires()
+    local accumulator = 0.0
+    local TICK_RATE = 60
+    local FIXED_DT = 1.0 / TICK_RATE
+    local sim_tick_count = 0
+
+    print("[LUA CO] Entering Deterministic Lockstep Render Loop...")
+
+    -- We define a function for the simulation tick to isolate state logic
+    local function update_simulation(grid, dt, tick_count)
+        -- In the future, this is where you call ffi.C.vx_math_dispatch_avx2()
+        -- For now, we animate the elevation based strictly on the tick_count
+        local spacing = 20.0
+        local offset_x = (MAP_WIDTH * spacing) / 2.0
+        local offset_z = (MAP_HEIGHT * spacing) / 2.0
+
+        -- The terrain animation is now driven by deterministic ticks, NOT frame render time
+        local wave_time = tick_count * dt
+
+        for z = 0, MAP_HEIGHT - 1 do
+            for x = 0, MAP_WIDTH - 1 do
+                local idx = z * MAP_WIDTH + x
+                local world_x = (x * spacing) - offset_x
+                local world_z = (z * spacing) - offset_z
+
+                grid.elevation[idx] = math.sin(world_x * 0.02 + wave_time) * math.cos(world_z * 0.02 + wave_time) * 50.0
+            end
+        end
+    end
+
     local gfx_pipeline_module = require("graphics_pipeline");
     local pump_deletion_queue = gfx_pipeline_module.PumpDeletionQueue;
 
@@ -247,43 +275,23 @@ local function main()
                 end
             end
         else
+
             local current_time = get_time_hires()
-            local dt = math.max(0.001, math.min(current_time - last_time, 0.033))
+            -- Cap frame_time to prevent the "Spiral of Death" if a window drags
+            local frame_time = math.max(0.001, math.min(current_time - last_time, 0.25))
             last_time = current_time
+            accumulator = accumulator + frame_time
 
-            local dx = ffi.C.vx_input_mouse_dx()
-            local dy = ffi.C.vx_input_mouse_dy()
-            local wasd = ffi.C.vx_input_wasd()
+            -- 1. SIMULATION DOMAIN (Strict Determinism)
+            while accumulator >= FIXED_DT do
+                -- (Your update_simulation logic remains here)
+                update_simulation(rts_grid, FIXED_DT, sim_tick_count)
 
-            local zoom_speed = move_speed * dt * 0.05
-            if bit.band(wasd, 16) ~= 0 then ortho_zoom = ortho_zoom - zoom_speed end
-            if bit.band(wasd, 32) ~= 0 then ortho_zoom = ortho_zoom + zoom_speed end
-            ortho_zoom = math.max(500.0, ortho_zoom)
+                accumulator = accumulator - FIXED_DT
+                sim_tick_count = sim_tick_count + 1
+            end
 
-            local aspect = sc.extent.width / math.max(1, sc.extent.height)
-            vmath.ortho_vk(-ortho_zoom * aspect, ortho_zoom * aspect, -ortho_zoom, ortho_zoom, -10000.0, 10000.0, proj)
-
-            local fwd_x = math.sin(cam_yaw)
-            local fwd_z = math.cos(cam_yaw)
-            local right_x = math.cos(cam_yaw)
-            local right_z = -math.sin(cam_yaw)
-
-            local frame_speed = move_speed * dt
-            if bit.band(wasd, 1) ~= 0 then cam_pos.x = cam_pos.x + fwd_x * frame_speed; cam_pos.z = cam_pos.z + fwd_z * frame_speed end
-            if bit.band(wasd, 2) ~= 0 then cam_pos.x = cam_pos.x - fwd_x * frame_speed; cam_pos.z = cam_pos.z - fwd_z * frame_speed end
-            if bit.band(wasd, 4) ~= 0 then cam_pos.x = cam_pos.x - right_x * frame_speed; cam_pos.z = cam_pos.z - right_z * frame_speed end
-            if bit.band(wasd, 8) ~= 0 then cam_pos.x = cam_pos.x + right_x * frame_speed; cam_pos.z = cam_pos.z + right_z * frame_speed end
-
-            local look_x = math.sin(cam_yaw) * math.cos(cam_pitch)
-            local look_y = -math.sin(cam_pitch)
-            local look_z = math.cos(cam_yaw) * math.cos(cam_pitch)
-            vmath.lookAt(cam_pos.x, cam_pos.y, cam_pos.z, cam_pos.x + look_x, cam_pos.y + look_y, cam_pos.z + look_z, view)
-
-            pc.dt = pc.dt + dt
-            total_time = total_time + dt
-            pc.total_time = total_time
-            vmath.multiply_mat4(proj, view, pc.viewProj)
-
+            -- [RESTORED] INPUT & CAMERA DOMAIN (Visual Only)
             local last_key = ffi.C.vx_input_last_key()
             if last_key == cfg.key.esc then ffi.C.vx_core_shutdown()
             elseif last_key == cfg.key.f5 then wants_hotswap = true
@@ -292,8 +300,49 @@ local function main()
             elseif last_key == cfg.key.num3 then active_render_mode = cfg.mode.points
             end
 
+            local wasd = ffi.C.vx_input_wasd()
+
+            -- Use frame_time here for uncapped, smooth local camera movement
+            local zoom_speed = move_speed * frame_time * 0.05
+            if bit.band(wasd, 16) ~= 0 then ortho_zoom = ortho_zoom - zoom_speed end
+            if bit.band(wasd, 32) ~= 0 then ortho_zoom = ortho_zoom + zoom_speed end
+            ortho_zoom = math.max(500.0, ortho_zoom)
+
+            local fwd_x = math.sin(cam_yaw)
+            local fwd_z = math.cos(cam_yaw)
+            local right_x = math.cos(cam_yaw)
+            local right_z = -math.sin(cam_yaw)
+
+            local frame_speed = move_speed * frame_time
+            if bit.band(wasd, 1) ~= 0 then cam_pos.x = cam_pos.x + fwd_x * frame_speed; cam_pos.z = cam_pos.z + fwd_z * frame_speed end
+            if bit.band(wasd, 2) ~= 0 then cam_pos.x = cam_pos.x - fwd_x * frame_speed; cam_pos.z = cam_pos.z - fwd_z * frame_speed end
+            if bit.band(wasd, 4) ~= 0 then cam_pos.x = cam_pos.x - right_x * frame_speed; cam_pos.z = cam_pos.z - right_z * frame_speed end
+            if bit.band(wasd, 8) ~= 0 then cam_pos.x = cam_pos.x + right_x * frame_speed; cam_pos.z = cam_pos.z + right_z * frame_speed end
+
+            total_time = total_time + frame_time
+            pc.total_time = total_time
+
+            -- Camera logic belongs in the render domain for maximum smoothness
+            local aspect = sc.extent.width / math.max(1, sc.extent.height)
+            vmath.ortho_vk(-ortho_zoom * aspect, ortho_zoom * aspect, -ortho_zoom, ortho_zoom, -10000.0, 10000.0, proj)
+
+            local look_x = math.sin(cam_yaw) * math.cos(cam_pitch)
+            local look_y = -math.sin(cam_pitch)
+            local look_z = math.cos(cam_yaw) * math.cos(cam_pitch)
+            vmath.lookAt(cam_pos.x, cam_pos.y, cam_pos.z, cam_pos.x + look_x, cam_pos.y + look_y, cam_pos.z + look_z, view)
+
+            vmath.multiply_mat4(proj, view, pc.viewProj)
+
             local write_idx = ffi.C.vx_stream_acquire()
+
             if write_idx ~= -1 then
+                -- Pass alpha to the GPU. The Vertex Shader can use this to lerp
+                -- between the previous grid state and current grid state for silky smooth 144hz+ visuals!
+                -- RENDER DOMAIN (Interpolated Handoff)
+                local alpha = accumulator / FIXED_DT
+                -- Pass alpha to the GPU for grid vertex interpolation
+                pc.dt = alpha
+
                 local FRAME_BYTES = total_tiles * ffi.sizeof("RtsTileInstance")
                 local current_frame_offset = write_idx * FRAME_BYTES
                 pc.aos_current_idx = current_frame_offset / 4
@@ -401,7 +450,7 @@ local function main()
                 frame_count = frame_count + 1
             end
         end
-        sys_sleep(10)
+        sys_sleep(1)
     end
 
     print("\n[LUA IO] Render Loop Terminated. Commencing Teardown...")

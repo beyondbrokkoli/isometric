@@ -84,14 +84,16 @@ local order = {
 --    "build.lua",
 
     -- [ C-CORE ]
-    "c/main.c",
---    "c/vx_math.c",
+--    "c/main.c",
+    "c/vx_math.c",
     "c/shared_structs.h",
 
     -- [ LUA ENGINE MODULES ]
---    "lua/boilerplate.lua",
+--    "lua/registry_vk.lua",
+--    "lua/sequence.lua",
+--    "lua/pipeline_manifest.lua",
 --    "lua/vulkan_core.lua",
---    "lua/vulkan_headers.lua",
+
 --    "lua/swapchain.lua",
 --    "lua/descriptors.lua",
 --    "lua/graphics_pipeline.lua",
