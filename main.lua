@@ -130,11 +130,29 @@ local function main()
         end
     end
 
-    print("[LUA CO] Initializing VRAM Index Buffer...")
+    print("[LUA CO] Initializing VRAM Index Buffer with Strict Topology...")
     local index_ptr = ffi.cast("uint32_t*", memory.Mapped["MASTER_INDEX_BLOCK"])
-    for i = 0, 23 do
-        index_ptr[i] = i % 14
-    end
+
+    -- The 24 indices required to construct the 3 visible faces of an isometric block
+    -- using the 14-vertex SHAPE_LIBRARY. (Clockwise winding order for front-face culling)
+    local iso_indices = ffi.new("uint32_t[24]", {
+        -- TOP FACE (Y+)
+        0, 2, 3,
+        0, 3, 4,
+        0, 4, 5,
+        0, 5, 2,
+
+        -- LEFT FACE (X-)
+        2, 6, 7,
+        2, 7, 3,
+
+        -- RIGHT FACE (Z-)
+        3, 7, 8,
+        3, 8, 4
+    })
+
+    -- Instantly copy the correct topological map into VRAM
+    ffi.copy(index_ptr, iso_indices, 24 * 4)
 
     local MAX_DRAW_COMMANDS = 1024
     local render_queues = ffi.new("DrawCommand[?]", MAX_DRAW_COMMANDS * cfg.cfg.frame_slots)
@@ -151,7 +169,7 @@ local function main()
     local ortho_zoom = 5000.0
     local cam_yaw, cam_pitch = 0.785398, 0.615472
     local cam_pos = {x = 0.0, y = 0.0, z = 0.0}
-    local move_speed = 320000.0
+    local move_speed = 4000.0
 
     local last_time = get_time_hires()
     local total_time = 0.0
