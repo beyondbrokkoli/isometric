@@ -1,5 +1,5 @@
 local bit = require("bit")
-
+-- OTHER_API = 4202603
 return {
     sys = { idle = 0, boot = 1, kill = 2 },
     win = { w = 1280, h = 720, min_w = 640, min_h = 360 },

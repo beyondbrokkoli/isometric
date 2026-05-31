@@ -69,20 +69,22 @@ local function compile_engine(platform, build_target)
         return
     end
 
-    -- [3/4] Compile AVX2 Math Library
-    print("\n[3/4] Compiling AVX2 Worker Pool (vx_math.c)...")
-    local math_cmd = ""
+    -- [3/4] Compile Networking Backend (vx_net.c)
+    print("\n[3/4] Compiling Networking Backend (vx_net.c)...")
+    local net_cmd = ""
     if platform == "linux" then
-        math_cmd = "gcc -shared -fPIC -O3 -march=x86-64-v3 -mavx2 -lm c/vx_math.c -o bin/libvx_math.so"
+        -- Native CachyOS/Linux Shared Object
+        net_cmd = "gcc -shared -fPIC -O3 -march=x86-64-v3 c/vx_net.c -o bin/libvx_net.so"
     elseif platform == "win" then
-        math_cmd = "gcc -shared -O3 -march=x86-64-v3 -mavx2 c/vx_math.c -o bin/vx_math.dll"
+        -- Windows DLL (Requires linking ws2_32)
+        net_cmd = "gcc -shared -O3 -march=x86-64-v3 c/vx_net.c -lws2_32 -o bin/vx_net.dll"
     end
 
-    --if not run_cmd(math_cmd) then
-    --    print("ERROR: vx_math compilation failed!")
-    --    os.exit(1)
-    --end
-    print("  |- Successfully compiled Math Library.")
+    if not run_cmd(net_cmd) then
+        print("ERROR: vx_net compilation failed!")
+        os.exit(1)
+    end
+    print("  |- Successfully compiled Networking Library.")
 
     -- [4/4] Compile Host C-Core
     print("\n[4/4] Compiling Laboratory Host (main.c) ...")

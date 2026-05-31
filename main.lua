@@ -80,8 +80,24 @@ local function boot_weaver()
 end
 
 local function main()
-    print("[LUA IO] Booting Headless Weaver (LABORATORY)...")
+    print("      WEAVER NETWORK INITIALIZATION")
+    print("Press [ENTER] to boot as HOST.")
+    print("Type any key then [ENTER] to boot as CLIENT.")
+    io.write("> ")
+    local user_input = io.read("*l")
 
+    local is_host = (user_input == "")
+    local my_port = is_host and 27015 or 27016
+    local target_port = is_host and 27016 or 27015
+
+    local net = require("network")
+    assert(net.Host(my_port), "FATAL: Failed to bind local network port!")
+    assert(net.Connect("127.0.0.1", target_port), "FATAL: Failed to set remote target!")
+
+    print(string.format("[NET] Socket Online. Role: %s | Port: %d -> Target: %d\n",
+          is_host and "HOST" or "CLIENT", my_port, target_port))
+
+    print("[LUA IO] Booting Headless Weaver (LABORATORY)...")
     local co = coroutine.create(boot_weaver)
     local status, engine_ctx
     while coroutine.status(co) ~= "dead" do
@@ -187,6 +203,22 @@ local function main()
     local FIXED_DT = 1.0 / TICK_RATE
     local sim_tick_count = 0
 
+    -- DIRECTIVE ZETA: ASYNC TRANSFER DISPATCH
+    print("[LUA CO] Packing Data-Driven Color Palette...")
+
+    -- 1. Grab the mapped CPU pointer for the Staging Arena
+    local staging_ptr = ffi.cast("float*", memory.Mapped["PALETTE_STAGING"])
+
+    -- 2. Write the Palette (RGBA Floats)
+    -- Terrain ID 0: Grass (Green)
+    staging_ptr[0] = 0.2; staging_ptr[1] = 0.8; staging_ptr[2] = 0.2; staging_ptr[3] = 1.0;
+    -- Terrain ID 255: Stone (Grey)
+    staging_ptr[4] = 0.5; staging_ptr[5] = 0.5; staging_ptr[6] = 0.5; staging_ptr[7] = 1.0;
+
+    -- 3. Fire the DMA Transfer (16 KB payload)
+    local palette_job_id = memory.TransferAsync("PALETTE_STAGING", "PALETTE_HAVEN", 16384)
+    local palette_ready = false
+
     print("[LUA CO] Entering Deterministic Lockstep Render Loop...")
 
     -- We define a function for the simulation tick to isolate state logic
@@ -213,6 +245,16 @@ local function main()
 
     local gfx_pipeline_module = require("graphics_pipeline");
     local pump_deletion_queue = gfx_pipeline_module.PumpDeletionQueue;
+
+    -- [NEW] Data-Driven Network Payloads
+    local PACKET_SIZE = ffi.sizeof("LockstepPacket")
+    local in_packet = ffi.new("LockstepPacket")
+    local out_packet = ffi.new("LockstepPacket")
+
+    print("[LUA CO] Priming the UDP Lockstep Pump...")
+    out_packet.frame_tick = sim_tick_count
+    out_packet.player_input = ffi.C.vx_input_wasd()
+    net.Send(out_packet, PACKET_SIZE)
 
     while ffi.C.vx_core_is_running() == 1 do
 
@@ -275,6 +317,15 @@ local function main()
                 end
             end
         else
+            -- Asynchronous Job Polling
+            if not palette_ready and palette_job_id ~= -1 then
+                if memory.IsTransferComplete(vk_rt, palette_job_id) then
+                    print("[LUA CO] Async Transfer Complete! Palette Haven Online.")
+                    palette_ready = true
+                    -- In the future, this is where you flip a bit in PushConstants
+                    -- to tell the shader: "Hey, the colors are ready, stop using defaults!"
+                end
+            end
 
             local current_time = get_time_hires()
             -- Cap frame_time to prevent the "Spiral of Death" if a window drags
@@ -284,11 +335,28 @@ local function main()
 
             -- 1. SIMULATION DOMAIN (Strict Determinism)
             while accumulator >= FIXED_DT do
-                -- (Your update_simulation logic remains here)
+
+                -- [LOCKSTEP STALL MECHANIC]
+                if not net.Poll(in_packet, PACKET_SIZE) then
+                    break -- STALL THE ENGINE! Leave accumulator >= FIXED_DT for next frame.
+                end
+
+                -- Optional UDP Sanity Check: Ensure we didn't receive an out-of-order packet
+                -- if in_packet.frame_tick ~= sim_tick_count then print("UDP Desync!") end
+
+                -- (Future) Apply in_packet.player_input to the opponent's units here
+
+                -- Run your simulation logic
                 update_simulation(rts_grid, FIXED_DT, sim_tick_count)
 
-                accumulator = accumulator - FIXED_DT
                 sim_tick_count = sim_tick_count + 1
+
+                -- Fire off our local state for the NEXT tick to the opponent
+                out_packet.frame_tick = sim_tick_count
+                out_packet.player_input = ffi.C.vx_input_wasd()
+                net.Send(out_packet, PACKET_SIZE)
+
+                accumulator = accumulator - FIXED_DT
             end
 
             -- [RESTORED] INPUT & CAMERA DOMAIN (Visual Only)
@@ -467,6 +535,12 @@ local function main()
     print("[TEARDOWN] Freeing VRAM and CPU Memory Arenas...")
     memory.DestroyBuffer("MASTER_GPU_BLOCK", vk_rt)
     memory.DestroyBuffer("MASTER_INDEX_BLOCK", vk_rt)
+
+    memory.DestroyBuffer("PALETTE_STAGING", vk_rt)
+    memory.DestroyBuffer("PALETTE_HAVEN", vk_rt)
+    net.Shutdown() -- [NEW] Close the socket gracefully
+    memory.DestroyTransferSubsystem(vk_rt)
+
     require("vulkan_core").Destroy(vk_rt)
 
     print("[LUA IO] Teardown Complete. Safe Exit.")

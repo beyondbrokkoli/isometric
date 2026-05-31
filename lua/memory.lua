@@ -93,7 +93,7 @@ Memory.TimelineValue = 0
 function Memory.InitTransferSubsystem(core_state)
     local typeInfo = ffi.new("VkSemaphoreTypeCreateInfo", {
         sType = 1000207002, -- VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO
-        semaphoreType = 2,  -- VK_SEMAPHORE_TYPE_TIMELINE
+        semaphoreType = 1,  -- VK_SEMAPHORE_TYPE_TIMELINE [FIXED] This MUST be 1
         initialValue = 0
     })
     local semInfo = ffi.new("VkSemaphoreCreateInfo")
@@ -228,11 +228,23 @@ function Memory.FreeSoA(names)
     end
 end
 
+function Memory.DestroyTransferSubsystem(core_state)
+    if Memory.TransferSemaphore ~= nil then
+        core_state.vk.vkDestroySemaphore(core_state.device, Memory.TransferSemaphore, nil)
+        Memory.TransferSemaphore = nil
+        print("[TEARDOWN] Timeline Semaphore destroyed.")
+    end
+end
+
 function Memory.DestroyBuffer(name, core_state)
     local vk = core_state.vk
     if Memory.Buffers[name] then vk.vkDestroyBuffer(core_state.device, Memory.Buffers[name], nil) end
     if Memory.DeviceMemory[name] then
-        vk.vkUnmapMemory(core_state.device, Memory.DeviceMemory[name])
+        -- Only unmap if we actually mapped it!
+        if Memory.Mapped[name] then
+            vk.vkUnmapMemory(core_state.device, Memory.DeviceMemory[name])
+            Memory.Mapped[name] = nil
+        end
         vk.vkFreeMemory(core_state.device, Memory.DeviceMemory[name], nil)
     end
 end

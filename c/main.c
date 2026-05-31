@@ -395,6 +395,7 @@ THREAD_FUNC transfer_thread_loop(void* arg) {
                 };
 
                 // Submit directly to the dedicated Transfer Queue!
+                printf("[C-CORE] Submitting DMA Transfer. Timeline Signal Value: %llu\n", (unsigned long long)job->signal_val);
                 pfnSubmit(g_wsi.transfer_queue, 1, &submitInfo, VK_NULL_HANDLE);
 
                 // Free the mailbox slot immediately.

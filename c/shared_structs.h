@@ -65,6 +65,11 @@ typedef struct __attribute__((packed, aligned(64))) {
     uint8_t _pad_tail[48];
 } RenderPacket;
 
+typedef struct __attribute__((packed, aligned(4))) {
+    uint32_t frame_tick;
+    uint32_t player_input;
+} LockstepPacket;
+
 
 // --- VULKAN HOST INTERFACES ---
 #ifdef VX_ENABLE_VULKAN_STRUCTS

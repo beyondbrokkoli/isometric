@@ -36,7 +36,8 @@ local reg = {
         device_ext = {
             "VK_KHR_swapchain", "VK_KHR_dynamic_rendering", "VK_KHR_depth_stencil_resolve",
             "VK_KHR_create_renderpass2", "VK_KHR_multiview", "VK_KHR_maintenance2",
-            "VK_EXT_extended_dynamic_state", "VK_EXT_extended_dynamic_state2"
+            "VK_EXT_extended_dynamic_state", "VK_EXT_extended_dynamic_state2",
+            "VK_KHR_timeline_semaphore" -- [NEW] Unlock the enumeration!
         }
     },
     -- [RESTORED] Vulkan Host Interface
@@ -120,7 +121,14 @@ local reg = {
                 { type = "uint32_t", name = "width" },
                 { type = "uint32_t", name = "height" }
             }
-        }
+        },
+        {
+            name = "LockstepPacket", c_only = true, align = 4, force_align = true,
+            members = {
+                { type = "uint32_t", name = "frame_tick" },
+                { type = "uint32_t", name = "player_input" } -- Maps to vx_input_wasd()
+            }
+        },
     }
 }
 

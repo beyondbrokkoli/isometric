@@ -167,6 +167,7 @@ function core.finalize_device_and_swapchain(vk_state, surface_ptr, req_extension
 
     -- [NEW] Inject Timeline Semaphores into the chain
     local timelineFeat = ffi.new("VkPhysicalDeviceTimelineSemaphoreFeatures")
+    ffi.fill(timelineFeat, ffi.sizeof(timelineFeat)) -- Better safe than sorry!
     timelineFeat.sType = 1000207000 -- VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES
     timelineFeat.timelineSemaphore = 1
     timelineFeat.pNext = extDynamicState2 -- Chain it!
