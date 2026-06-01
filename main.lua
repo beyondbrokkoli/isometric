@@ -33,6 +33,7 @@ ffi.cdef[[
     float vx_input_mouse_y();
     float vx_input_click_x();
     float vx_input_click_y();
+    int vx_input_is_captured();
 
     int vx_sys_resize_flag();
     void vx_sys_window_size(int* w, int* h);
@@ -470,11 +471,17 @@ local function main()
             local EDGE_THRESHOLD = 40.0
             local pan_x, pan_z = 0.0, 0.0
 
-            if mouse_x < EDGE_THRESHOLD then pan_x = -1.0
-            elseif mouse_x > sc.extent.width - EDGE_THRESHOLD then pan_x = 1.0 end
+            -- Query the C-Core Mailbox for the F10 state
+            local is_captured = ffi.C.vx_input_is_captured() == 1
 
-            if mouse_y < EDGE_THRESHOLD then pan_z = -1.0
-            elseif mouse_y > sc.extent.height - EDGE_THRESHOLD then pan_z = 1.0 end
+            -- ONLY calculate edge panning if the mouse is clamped to the game window!
+            if is_captured then
+                if mouse_x < EDGE_THRESHOLD then pan_x = -1.0
+                elseif mouse_x > sc.extent.width - EDGE_THRESHOLD then pan_x = 1.0 end
+
+                if mouse_y < EDGE_THRESHOLD then pan_z = -1.0
+                elseif mouse_y > sc.extent.height - EDGE_THRESHOLD then pan_z = 1.0 end
+            end
 
             local fwd_x = math.sin(cam_yaw)
             local fwd_z = math.cos(cam_yaw)

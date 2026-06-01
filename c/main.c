@@ -71,6 +71,7 @@ typedef struct {
     _Atomic float mouse_y;  // Add this
     _Atomic float click_x;  // NEW: Hardware-latched X
     _Atomic float click_y;  // NEW: Hardware-latched Y
+    _Atomic int mouse_captured; // NEW: Track the F10 toggle state
 
     _Atomic int window_resized;
     _Atomic int win_w;
@@ -159,6 +160,10 @@ EXPORT float vx_input_click_y() {
     return atomic_load_explicit(&g_engine.mailbox.click_y, memory_order_acquire);
 }
 
+EXPORT int vx_input_is_captured() {
+    return atomic_load_explicit(&g_engine.mailbox.mouse_captured, memory_order_acquire);
+}
+
 void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     if (action == GLFW_PRESS || action == GLFW_RELEASE) {
         uint32_t bit = 0;
@@ -201,6 +206,20 @@ void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, in
             glfwSetWindowMonitor(window, NULL, s_win_x, s_win_y, s_win_w, s_win_h, 0);
             s_is_fullscreen = false;
             printf("[C-CORE] Windowed Mode Restored\n");
+        }
+    }
+    // THE MOUSE RELAY TOGGLE
+    if (key == GLFW_KEY_F10 && action == GLFW_PRESS) {
+        int is_cap = atomic_load_explicit(&g_engine.mailbox.mouse_captured, memory_order_acquire);
+        is_cap = !is_cap; // Flip the state
+        atomic_store_explicit(&g_engine.mailbox.mouse_captured, is_cap, memory_order_release);
+
+        if (is_cap) {
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_CAPTURED);
+            printf("[C-CORE] Mouse Clamped to Window (F10)\n");
+        } else {
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            printf("[C-CORE] Mouse Freed (F10)\n");
         }
     }
     if (action == GLFW_PRESS) {
@@ -801,6 +820,7 @@ void vx_init_mailbox() {
     atomic_init(&g_engine.mailbox.mouse_y, 0.0f);
     atomic_init(&g_engine.mailbox.click_x, -1.0f); // Initialize to -1
     atomic_init(&g_engine.mailbox.click_y, -1.0f); // Initialize to -1
+    atomic_init(&g_engine.mailbox.mouse_captured, 0); // Start Free
 }
 
 THREAD_FUNC lua_co_overlord_loop(void* arg) {
