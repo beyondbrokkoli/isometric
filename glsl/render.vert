@@ -38,11 +38,6 @@ void main() {
     
     vec3 final_pos = tile_pos + local_pos;
 
-    // [NEW] Float the point cloud above the geometry in Dual Mode!
-    if (pc.target_state == MODE_POINT_CLOUD_PASS) {
-        final_pos.y += 8.0; 
-    }
-
     gl_Position = pc.viewProj * vec4(final_pos, 1.0);
     v_worldPos = final_pos;
     
