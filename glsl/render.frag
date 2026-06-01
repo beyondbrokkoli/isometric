@@ -6,10 +6,14 @@ layout(location = 0) in vec3 fragColor;
 layout(location = 1) in vec3 v_worldPos;
 layout(location = 2) flat in uint v_shapeID;
 layout(location = 3) flat in float v_colorIdx;
+layout(location = 4) flat in uint v_instanceID; // [NEW] Catch the ID
 
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out uint outTileID; // [NEW] The ID Buffer Attachment
 
 void main() {
+    outTileID = v_instanceID; // Write the raw integer to the G-Buffer
+
     if (v_shapeID == MODE_POINT_CLOUD_PASS) {
         vec2 ptc = gl_PointCoord - vec2(0.5);
         float distSq = dot(ptc, ptc);

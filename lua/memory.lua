@@ -188,7 +188,7 @@ function Memory.CreateBufferHaven(name, byte_size, usage_flags, core_state)
     local vk = core_state.vk
 
     -- Force the Transfer Destination bit (256) so the DMA engine can write to it
-    local final_usage = bit.bor(usage_flags, 256)
+    local final_usage = bit.bor(usage_flags, 256, 32)
 
     local bufInfo = ffi.new("VkBufferCreateInfo", {
         sType = vk_struct.buffer_create,

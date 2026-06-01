@@ -1,6 +1,14 @@
-$ bin/boot.exe
+$ ./start.bat
 [C-CORE] Booting Headless Worker...
 [LUA-OS-THREAD] Booting Lua VM...
+      WEAVER NETWORK INITIALIZATION
+Press [ENTER] to boot as HOST.
+Type any key then [ENTER] to boot as CLIENT.
+>
+[NET] UDP socket bound to port 27015 (fd=780)
+[NET] Remote target set: 127.0.0.1:27016
+[NET] Socket Online. Role: HOST | Port: 27015 -> Target: 27016
+
 [LUA IO] Booting Headless Weaver (LABORATORY)...
 [WEAVER] Executing Stage 1: Vulkan Instance
 [LUA] Initializing Vulkan Core (Instance Generation)...
@@ -12,20 +20,31 @@ $ bin/boot.exe
 [C-CORE] Window & Surface Created on Lua's Demand!
 [WEAVER] Executing Stage 3: Vulkan Logical Device
 [LUA] Resuming Vulkan Setup. Finalizing Logical Device...
+[LUA] No dedicated Transfer queue found. Sharing Graphics queue.
 [LUA] Logical Device Created!
 [WEAVER] Executing Stage 4: Memory Arenas Allocation
+[MEMORY] Timeline Semaphore forged for Async Transfers.
 [MEMORY] ReBAR Supported! Streaming directly to VRAM.
-[MEMORY] Allocated & Mapped VRAM Buffer: MASTER_INDEX_BLOCK (11.44 MB)
+[MEMORY] Allocated & Mapped VRAM Buffer: MASTER_INDEX_BLOCK (0.00 MB)
 [MEMORY] ReBAR Supported! Streaming directly to VRAM.
-[MEMORY] Allocated & Mapped VRAM Buffer: MASTER_GPU_BLOCK (136.00 MB)
+[MEMORY] Allocated & Mapped VRAM Buffer: MASTER_GPU_BLOCK (12.00 MB)
+[MEMORY] ReBAR Supported! Streaming directly to VRAM.
+[MEMORY] Allocated & Mapped VRAM Buffer: PALETTE_STAGING (0.02 MB)
+[MEMORY] Forged GPU Buffer Haven: PALETTE_HAVEN (0.02 MB)
 [WEAVER] Executing Stage 5: Swapchain Initialization
 [SWAPCHAIN] Building the display chain...
 [SWAPCHAIN] Created successfully with 3 images!
 [WEAVER] Executing Stage 6: Descriptors Matrix
-[DESCRIPTORS] Wiring Master VRAM Arena as a Unified SSBO...
+[DESCRIPTORS] Wiring Master VRAM Arena & Palette Haven...
+
+[VULKAN LAYER ENFORCER]
+SEVERITY: 4096
+MESSAGE: vkUpdateDescriptorSets(): pDescriptorWrites[1].pBufferInfo[0].buffer was created with VK_BUFFER_USAGE_2_TRANSFER_DST_BIT|VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT|VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT, but descriptorType is VK_DESCRIPTOR_TYPE_STORAGE_BUFFER.
+The Vulkan spec states: If descriptorType is VK_DESCRIPTOR_TYPE_STORAGE_BUFFER or VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, the buffer member of each element of pBufferInfo must have been created with the VK_BUFFER_USAGE_STORAGE_BUFFER_BIT usage flag set (https://docs.vulkan.org/spec/latest/chapters/descriptorsets.html#VUID-VkWriteDescriptorSet-descriptorType-00331)
+
 [DESCRIPTORS] Unified Memory Matrix successfully bound!
 [WEAVER] Executing Stage 7: Compute Graph Pipelines
-[COMPUTE] Forging 6-Pass Compute Shaders...
+[COMPUTE] Forging 0-Pass Compute Shaders...
 [WEAVER] Executing Stage 8: Graphics Pipelines & Depth Buffer
 [GRAPHICS] Building Reverse-Z Depth Buffer and Shader Modules...
 [WEAVER] Executing Stage 9: Renderer Synchronization
@@ -33,79 +52,18 @@ $ bin/boot.exe
 [WEAVER] Executing Stage 10: Async Overlord Handoff
 [WEAVER] Packing C-Core Mailbox and firing Render Thread...
 [WEAVER] Engine Initialization Complete. Async Overlord is LIVE.
-[LUA IO] Weaver sequence complete! Unpacking God Object...
-[LUA IO] Initializing CPU Data Structures...
-[C-CORE] Async Render Thread Online.
-[MEMORY] Allocated Fast CPU RAM: px (3.81 MB)
-[MEMORY] Allocated Fast CPU RAM: py (3.81 MB)
-[MEMORY] Allocated Fast CPU RAM: pz (3.81 MB)
-[MEMORY] Allocated Fast CPU RAM: vx (3.81 MB)
-[MEMORY] Allocated Fast CPU RAM: vy (3.81 MB)
-[MEMORY] Allocated Fast CPU RAM: vz (3.81 MB)
-[MEMORY] Allocated Fast CPU RAM: seed (3.81 MB)
-[LUA CO] Forging Procedural Pizza World Terrain...
-[LUA CO] Compiling Geometry Indices to mapped VRAM...
-[LUA CO] Entering Data-Driven Render Loop...
-[C-CORE] Native Fullscreen Engaged (1680x1050 @ 60Hz)
-
-[LUA CO] Window Stable. Initiating Mini-Weaver Rebuild...
-[C-CORE] Async Render Thread gracefully terminated and pool destroyed.
-[C-CORE] Async Render Thread gracefully terminated for rebuild.
-[TEARDOWN] Destroying Graphics Pipelines & Depth Buffer...
-[TEARDOWN] Dismantling Renderer Sync Objects...
-[MINI-WEAVER] Executing: Swapchain Initialization
-[SWAPCHAIN] Building the display chain...
-[SWAPCHAIN] Created successfully with 3 images!
-[MINI-WEAVER] Executing: Graphics Pipelines & Depth Buffer
-[GRAPHICS] Building Reverse-Z Depth Buffer and Shader Modules...
-[MINI-WEAVER] Executing: Renderer Synchronization
-[RENDERER] Forging Synchronization Primitives...
-[TEARDOWN] Destroying Swapchain & Image Views...
-[WEAVER] Packing C-Core Mailbox and firing Render Thread...
-[WEAVER] Engine Initialization Complete. Async Overlord is LIVE.
-[LUA CO] Mini-Weaver Rebuild Complete.
+[LUA IO] Weaver sequence complete! Unpacking Context...[C-CORE] Async Transfer Overlord Online.
 
 [C-CORE] Async Render Thread Online.
-
-[LUA CO] Snap: ISOMETRIC PIZZA WORLD
-
-[C-CORE] Shutdown triggered. Waiting for Lua VM...
-
-[LUA IO] Render Loop Terminated. Commencing Teardown...
-[TEARDOWN] Terminating Async Render Thread and Worker Pool...
-
-[VULKAN LAYER ENFORCER]
-SEVERITY: 4096
-MESSAGE: vkQueueSubmit(): pSubmits[0].pWaitSemaphores[0] queue (VkQueue 0x217f4919588) is waiting on semaphore (VkSemaphore 0x520000000052) that has no way to be signaled.
-The Vulkan spec states: All elements of the pWaitSemaphores member of all elements of pSubmits created with a VkSemaphoreType of VK_SEMAPHORE_TYPE_BINARY must reference a semaphore signal operation that has been submitted for execution and any semaphore signal operations on which it depends must have also been submitted for execution (https://docs.vulkan.org/spec/latest/chapters/cmdbuffers.html#VUID-vkQueueSubmit-pWaitSemaphores-03238)
-
-
-[VULKAN LAYER ENFORCER]
-SEVERITY: 4096
-MESSAGE: vkQueueSubmit(): pSubmits[0].pSignalSemaphores[0] (VkSemaphore 0x590000000059) is being signaled by VkQueue 0x217f4919588, but it may still be in use by VkSwapchainKHR 0x440000000044.
-Most recently acquired image indices: 1, 2, 0, 1, 2, 0, 1, [2].
-(Brackets mark the last use of VkSemaphore 0x590000000059 in a presentation operation.)
-Swapchain image 2 was presented but was not re-acquired, so VkSemaphore 0x590000000059 may still be in use.
-Vulkan insight: See https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html for details on swapchain semaphore reuse. Examples of possible approaches:
-   a) Use a separate semaphore per swapchain image. Index these semaphores using the index of the acquired image.
-   b) Consider the VK_KHR_swapchain_maintenance1 extension. It allows using a VkFence with the presentation operation.
-The Vulkan spec states: Each binary semaphore element of the pSignalSemaphores member of any element of pSubmits must be unsignaled when the semaphore signal operation it defines is executed on the device (https://docs.vulkan.org/spec/latest/chapters/cmdbuffers.html#VUID-vkQueueSubmit-pSignalSemaphores-00067)
-
-
-[VULKAN LAYER ENFORCER]
-SEVERITY: 4096
-MESSAGE: vkQueuePresentKHR(): pPresentInfo->pSwapchains[0] image at index 2 was not acquired from the swapchain.
-The Vulkan spec states: Each element of pImageIndices must be the index of a presentable image acquired from the swapchain specified by the corresponding element of the pSwapchains array, and the presented image subresource must be in the VK_IMAGE_LAYOUT_PRESENT_SRC_KHR or VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR layout at the time the operation is executed on a VkDevice (https://docs.vulkan.org/spec/latest/chapters/VK_KHR_surface/wsi.html#VUID-VkPresentInfoKHR-pImageIndices-01430)
-
-[C-CORE] Async Render Thread gracefully terminated and pool destroyed.
-[C-CORE] Async Render Thread gracefully terminated for rebuild.
-[TEARDOWN] Destroying Graphics Pipelines & Depth Buffer...
-[TEARDOWN] Dismantling Compute Graph Pipelines...
-[TEARDOWN] Deconstructing Descriptors...
-[TEARDOWN] Destroying Swapchain & Image Views...
-[TEARDOWN] Dismantling Renderer Sync Objects...
-[TEARDOWN] Freeing VRAM and CPU Memory Arenas...
-[TEARDOWN] Shutting down Vulkan Core...
-[LUA IO] Teardown Complete. Safe Exit.
-[LUA-OS-THREAD] VM Destroyed.
-[C-CORE] Clean Exit.
+[LUA CO] Forging Data-Driven Pizza World Tilemap...
+[MEMORY] Allocated Fast CPU RAM: terrain_id (0.12 MB)
+[MEMORY] Allocated Fast CPU RAM: elevation (0.12 MB)
+[MEMORY] Allocated Fast CPU RAM: entity_id (0.12 MB)
+[LUA CO] Initializing VRAM Index Buffer with Strict Topology...
+[LUA CO] Packing Data-Driven Color Palette...
+[TRANSFER] Job dispatched: PALETTE_STAGING -> PALETTE_HAVEN (Target Timeline: 1)
+[LUA CO] Entering Deterministic Lockstep Render Loop...
+[LUA CO] Priming the UDP Lockstep Pump...
+[C-CORE] Submitting DMA Transfer. Timeline Signal Value: 1
+[LUA CO] Async Transfer Complete! Palette Haven Online.
+^CBatchvorgang abbrechen (J/N)? J

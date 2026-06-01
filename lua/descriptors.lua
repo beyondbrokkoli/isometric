@@ -110,7 +110,7 @@ function Descriptors.Init(vk, device, master_gpu_buffer, palette_haven_buffer)
     writes[1].dstBinding = 1
     writes[1].descriptorCount = 1
     writes[1].descriptorType = vk_desc.ssbo
-    writes[1].pBufferInfo = bufInfos + 0
+    writes[1].pBufferInfo = bufInfos + 1
 
     vk.vkUpdateDescriptorSets(device, 2, writes, 0, nil)
 

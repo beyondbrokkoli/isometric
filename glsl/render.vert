@@ -9,6 +9,7 @@ layout(location = 0) out vec3 fragColor;
 layout(location = 1) out vec3 v_worldPos;
 layout(location = 2) flat out uint v_shapeID;
 layout(location = 3) flat out float v_colorIdx;
+layout(location = 4) flat out uint v_instanceID; // [NEW] Pass the raw ID
 
 const vec3 SHAPE_LIBRARY[14] = vec3[](
     vec3(0.0,  1.5,  0.0), vec3(0.0, -0.5,  0.0), vec3(-1.0, 0.0,  1.0),
@@ -19,6 +20,8 @@ const vec3 SHAPE_LIBRARY[14] = vec3[](
 );
 
 void main() {
+    v_instanceID = gl_InstanceIndex; // Maps 1:1 to your Lua grid index
+
     uint base_idx = pc.aos_current_idx + (gl_InstanceIndex * 4); 
     
     vec3 tile_pos = vec3(

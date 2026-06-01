@@ -12,6 +12,7 @@
     #pragma comment(lib, "ws2_32.lib")
     typedef int socklen_t;
     typedef SSIZE_T ssize_t;
+    typedef SOCKET vx_socket_t; /* [NEW] Native Windows socket type */
     static int net_wsa_initialized = 0;
     #define NET_CLOSE closesocket
     #define NET_ERROR SOCKET_ERROR
@@ -23,10 +24,11 @@
     #include <sys/socket.h>
     #include <netinet/in.h>
     #include <arpa/inet.h>
-    #include <netdb.h> /* [NEW] Required for gethostbyname and struct hostent */
+    #include <netdb.h>
     #include <fcntl.h>
     #include <unistd.h>
     #include <errno.h>
+    typedef int vx_socket_t; /* [NEW] Native POSIX socket type */
     #define NET_CLOSE close
     #define NET_ERROR -1
     #define NET_INVALID -1
@@ -36,7 +38,7 @@
 
 // Internal Network State (lock-free for single-threaded Lua access)
 static struct {
-    int sock;
+    vx_socket_t sock; /* [FIXED] Now properly scales to 64-bit on Windows */
     int is_bound;
     int is_connected;
     struct sockaddr_in remote_addr;
@@ -98,7 +100,9 @@ EXPORT int vx_net_host(int port) {
         return -1;
     }
 
-    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    /* [FIXED] Use the cross-platform type instead of int */
+    vx_socket_t sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
     if (sock == NET_INVALID) {
         atomic_store_explicit(&g_net.last_error, NET_LASTERR, memory_order_release);
         return -1;

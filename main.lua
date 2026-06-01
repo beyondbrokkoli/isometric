@@ -1,6 +1,7 @@
 package.path = "./lua/?.lua;" .. package.path
 local ffi = require("ffi")
 local math = require("math")
+local bit = require("bit")
 
 -- DECOUPLED IMPORTS
 local seq = require("sequence")
@@ -27,6 +28,12 @@ ffi.cdef[[
     uint32_t vx_input_wasd();
     float vx_input_mouse_dx();
     float vx_input_mouse_dy();
+
+    float vx_input_mouse_x();
+    float vx_input_mouse_y();
+    float vx_input_click_x();
+    float vx_input_click_y();
+
     int vx_sys_resize_flag();
     void vx_sys_window_size(int* w, int* h);
     int vx_input_mouse_btn(int btn);
@@ -132,43 +139,41 @@ local function main()
     local offset_x = (MAP_WIDTH * spacing) / 2.0
     local offset_z = (MAP_HEIGHT * spacing) / 2.0
 
+    -- Subtractive Cleanup: Flatten the Pizza World into a true testing tabletop
     for z = 0, MAP_HEIGHT - 1 do
         for x = 0, MAP_WIDTH - 1 do
             local idx = z * MAP_WIDTH + x
-            local world_x = (x * spacing) - offset_x
-            local world_z = (z * spacing) - offset_z
-
-            local elevation = math.sin(world_x * 0.02) * math.cos(world_z * 0.02) * 50.0
-            local terrain_id = ((x + z) % 2 == 0) and 255 or 0
-
-            rts_grid.elevation[idx] = elevation
-            rts_grid.terrain[idx] = terrain_id
+            rts_grid.elevation[idx] = 0.0 -- Perfect flat baseline
+            rts_grid.terrain[idx] = 0     -- Uniform grass canvas
         end
     end
 
     print("[LUA CO] Initializing VRAM Index Buffer with Strict Topology...")
     local index_ptr = ffi.cast("uint32_t*", memory.Mapped["MASTER_INDEX_BLOCK"])
 
-    -- The 24 indices required to construct the 3 visible faces of an isometric block
-    -- using the 14-vertex SHAPE_LIBRARY. (Clockwise winding order for front-face culling)
-    local iso_indices = ffi.new("uint32_t[24]", {
-        -- TOP FACE (Y+)
+    -- Expanded from 24 to 36 indices to close the back walls
+    local iso_indices = ffi.new("uint32_t[36]", {
+        -- TOP PYRAMID ROOF
         0, 2, 3,
         0, 3, 4,
         0, 4, 5,
         0, 5, 2,
-
-        -- LEFT FACE (X-)
+        -- WALL 1 (South-West)
         2, 6, 7,
         2, 7, 3,
-
-        -- RIGHT FACE (Z-)
-        3, 7, 8,
-        3, 8, 4
+        -- WALL 2 (South-East)  <-- FIX: Index 8 replaced with 11
+        3, 7, 11,
+        3, 11, 4,
+        -- WALL 3 (North-East)  <-- NEW: Encloses the back
+        4, 11, 10,
+        4, 10, 5,
+        -- WALL 4 (North-West)  <-- NEW: Encloses the back
+        5, 10, 6,
+        5, 6, 2
     })
 
-    -- Instantly copy the correct topological map into VRAM
-    ffi.copy(index_ptr, iso_indices, 24 * 4)
+    -- Increase the copy size to match 36 indices (36 * 4 bytes)
+    ffi.copy(index_ptr, iso_indices, 36 * 4)
 
     local MAX_DRAW_COMMANDS = 1024
     local render_queues = ffi.new("DrawCommand[?]", MAX_DRAW_COMMANDS * cfg.cfg.frame_slots)
@@ -212,35 +217,30 @@ local function main()
     -- 2. Write the Palette (RGBA Floats)
     -- Terrain ID 0: Grass (Green)
     staging_ptr[0] = 0.2; staging_ptr[1] = 0.8; staging_ptr[2] = 0.2; staging_ptr[3] = 1.0;
-    -- Terrain ID 255: Stone (Grey)
-    staging_ptr[4] = 0.5; staging_ptr[5] = 0.5; staging_ptr[6] = 0.5; staging_ptr[7] = 1.0;
 
+    -- Terrain ID 1: Local Player (Blue)
+    staging_ptr[4] = 0.2; staging_ptr[5] = 0.5; staging_ptr[6] = 1.0; staging_ptr[7] = 1.0;
+
+    -- Terrain ID 2: Remote Player (Red)
+    staging_ptr[8] = 1.0; staging_ptr[9] = 0.2; staging_ptr[10] = 0.2; staging_ptr[11] = 1.0;
+
+    -- Terrain ID 255: Stone (Grey) -> Note: ID 255 is offset 255 * 4 = 1020
+    staging_ptr[1020] = 0.5; staging_ptr[1021] = 0.5; staging_ptr[1022] = 0.5; staging_ptr[1023] = 1.0;
     -- 3. Fire the DMA Transfer (16 KB payload)
     local palette_job_id = memory.TransferAsync("PALETTE_STAGING", "PALETTE_HAVEN", 16384)
     local palette_ready = false
 
+    -- [NEW] Map the ID Harvesting Mailbox
+    local pick_ptr = ffi.cast("uint32_t*", memory.Mapped["PICK_BUFFER"])
+    pick_ptr[0] = 0xFFFFFFFF
+    local pick_countdown = 0 -- [NEW]
+
     print("[LUA CO] Entering Deterministic Lockstep Render Loop...")
 
-    -- We define a function for the simulation tick to isolate state logic
+    -- Replace your old function with this to turn the grid into a static canvas
     local function update_simulation(grid, dt, tick_count)
-        -- In the future, this is where you call ffi.C.vx_math_dispatch_avx2()
-        -- For now, we animate the elevation based strictly on the tick_count
-        local spacing = 20.0
-        local offset_x = (MAP_WIDTH * spacing) / 2.0
-        local offset_z = (MAP_HEIGHT * spacing) / 2.0
-
-        -- The terrain animation is now driven by deterministic ticks, NOT frame render time
-        local wave_time = tick_count * dt
-
-        for z = 0, MAP_HEIGHT - 1 do
-            for x = 0, MAP_WIDTH - 1 do
-                local idx = z * MAP_WIDTH + x
-                local world_x = (x * spacing) - offset_x
-                local world_z = (z * spacing) - offset_z
-
-                grid.elevation[idx] = math.sin(world_x * 0.02 + wave_time) * math.cos(world_z * 0.02 + wave_time) * 50.0
-            end
-        end
+        -- No more sine waves or terrain overwrites!
+        -- The terrain is entirely driven by player input now.
     end
 
     local gfx_pipeline_module = require("graphics_pipeline");
@@ -255,6 +255,52 @@ local function main()
     out_packet.frame_tick = sim_tick_count
     out_packet.player_input = ffi.C.vx_input_wasd()
     net.Send(out_packet, PACKET_SIZE)
+
+    -- Spawn coordinates for our lockstep entities
+    local local_avatar = {
+        x = is_host and 64 or 192,
+        z = is_host and 64 or 192,
+        id = 1 -- Always Blue locally
+    }
+
+    local remote_avatar = {
+        x = is_host and 192 or 64,
+        z = is_host and 192 or 64,
+        id = 2 -- Always Red remotely
+    }
+
+    local function apply_locomotion(grid, avatar, input_mask, tick_count)
+        -- Throttle movement to 10 tiles per second
+        if tick_count % 6 ~= 0 then return end
+        if input_mask == 0 then return end
+
+        -- 1. Erase the old footprint (Restore to Grass)
+        local old_idx = avatar.z * MAP_WIDTH + avatar.x
+        grid.terrain[old_idx] = 0
+        grid.elevation[old_idx] = 0.0 -- FIX: Smashes the old tile back flat
+
+        -- 2. Decode the Bitmask (W=1, S=2, A=4, D=8)
+        if bit.band(input_mask, 1) ~= 0 then avatar.z = avatar.z - 1 end
+        if bit.band(input_mask, 2) ~= 0 then avatar.z = avatar.z + 1 end
+        if bit.band(input_mask, 4) ~= 0 then avatar.x = avatar.x - 1 end
+        if bit.band(input_mask, 8) ~= 0 then avatar.x = avatar.x + 1 end
+
+        -- 3. Strict Deterministic Bounds Checking
+        avatar.x = math.max(0, math.min(MAP_WIDTH - 1, avatar.x))
+        avatar.z = math.max(0, math.min(MAP_HEIGHT - 1, avatar.z))
+
+        -- 4. Engrave the new physical presence
+        local new_idx = avatar.z * MAP_WIDTH + avatar.x
+        grid.terrain[new_idx] = avatar.id
+        grid.elevation[new_idx] = 80.0 -- Spike the elevation so they literally stand out
+    end
+
+    local prev_mouse_left = 0
+    local pending_click = -1
+    local pick_countdown = 0
+    local latched_pick_x, latched_pick_y = -1, -1
+
+    out_packet.click_grid_idx = -1
 
     while ffi.C.vx_core_is_running() == 1 do
 
@@ -328,38 +374,90 @@ local function main()
             end
 
             local current_time = get_time_hires()
-            -- Cap frame_time to prevent the "Spiral of Death" if a window drags
             local frame_time = math.max(0.001, math.min(current_time - last_time, 0.25))
             last_time = current_time
             accumulator = accumulator + frame_time
 
-            -- 1. SIMULATION DOMAIN (Strict Determinism)
-            while accumulator >= FIXED_DT do
+            local req_pick_x, req_pick_y = -1, -1
+            local harvested_id = pick_ptr[0]
 
-                -- [LOCKSTEP STALL MECHANIC]
-                if not net.Poll(in_packet, PACKET_SIZE) then
-                    break -- STALL THE ENGINE! Leave accumulator >= FIXED_DT for next frame.
+            if harvested_id ~= 0xFFFFFFFF then
+                pending_click = harvested_id
+                pick_ptr[0] = 0xFFFFFFFF
+                pick_countdown = 0 -- Instantly abort the countdown once we get our answer!
+            end
+
+            local mouse_left = ffi.C.vx_input_mouse_btn(0)
+            -- RESTORE THESE TWO LINES: The camera still needs live coordinates for edge-panning!
+            local mouse_x = ffi.C.vx_input_mouse_x()
+            local mouse_y = ffi.C.vx_input_mouse_y()
+
+            if mouse_left == 1 and prev_mouse_left == 0 then
+                -- 1. HARDWARE LATCH: Get exact click coordinates
+                latched_pick_x = math.floor(ffi.C.vx_input_click_x())
+                latched_pick_y = math.floor(ffi.C.vx_input_click_y())
+
+                -- 2. MULTI-FRAME INJECTION: Spam it into the ring buffer
+                pick_countdown = 5 -- Boosted to 5 to be bulletproof against high Lua FPS
+            end
+            prev_mouse_left = mouse_left
+
+            if pick_countdown > 0 then
+                -- Safely feed the exact same latched coordinate every frame
+                req_pick_x = latched_pick_x
+                req_pick_y = latched_pick_y
+                pick_countdown = pick_countdown - 1
+            end
+
+            -- 2. DETERMINISTIC LOCKSTEP LOOP
+            while accumulator >= FIXED_DT do
+                if not net.Poll(in_packet, PACKET_SIZE) then break end
+
+                local current_local_input = ffi.C.vx_input_wasd()
+
+                -- Consume local click for this tick
+                local local_click = pending_click
+                pending_click = -1
+
+                -- Apply Standard Locomotion
+                apply_locomotion(rts_grid, local_avatar, current_local_input, sim_tick_count)
+                apply_locomotion(rts_grid, remote_avatar, in_packet.player_input, sim_tick_count)
+
+                -- Apply Deterministic Mouse Picking
+                if local_click ~= -1 then
+                    if rts_grid.terrain[local_click] == 0 then
+                        rts_grid.terrain[local_click] = local_avatar.id
+                        rts_grid.elevation[local_click] = 50.0 -- Visual feedback pop
+                    else
+                        rts_grid.terrain[local_click] = 0
+                        rts_grid.elevation[local_click] = 0.0  -- FIX: Flatten when toggled off
+                    end
                 end
 
-                -- Optional UDP Sanity Check: Ensure we didn't receive an out-of-order packet
-                -- if in_packet.frame_tick ~= sim_tick_count then print("UDP Desync!") end
+                if in_packet.click_grid_idx ~= -1 then
+                    local r_idx = in_packet.click_grid_idx
+                    if rts_grid.terrain[r_idx] == 0 then
+                        rts_grid.terrain[r_idx] = remote_avatar.id
+                        rts_grid.elevation[r_idx] = 50.0
+                    else
+                        rts_grid.terrain[r_idx] = 0
+                        rts_grid.elevation[r_idx] = 0.0
+                    end
+                end
 
-                -- (Future) Apply in_packet.player_input to the opponent's units here
-
-                -- Run your simulation logic
                 update_simulation(rts_grid, FIXED_DT, sim_tick_count)
-
                 sim_tick_count = sim_tick_count + 1
 
-                -- Fire off our local state for the NEXT tick to the opponent
+                -- Broadcast State
                 out_packet.frame_tick = sim_tick_count
-                out_packet.player_input = ffi.C.vx_input_wasd()
+                out_packet.player_input = current_local_input
+                out_packet.click_grid_idx = local_click
                 net.Send(out_packet, PACKET_SIZE)
 
                 accumulator = accumulator - FIXED_DT
             end
 
-            -- [RESTORED] INPUT & CAMERA DOMAIN (Visual Only)
+            -- This handles the Escape key, the Window 'X' button, and mode toggles
             local last_key = ffi.C.vx_input_last_key()
             if last_key == cfg.key.esc then ffi.C.vx_core_shutdown()
             elseif last_key == cfg.key.f5 then wants_hotswap = true
@@ -368,13 +466,15 @@ local function main()
             elseif last_key == cfg.key.num3 then active_render_mode = cfg.mode.points
             end
 
-            local wasd = ffi.C.vx_input_wasd()
+            -- 3. CAMERA OVERHAUL: EDGE PANNING & EXPONENTIAL ZOOM
+            local EDGE_THRESHOLD = 40.0
+            local pan_x, pan_z = 0.0, 0.0
 
-            -- Use frame_time here for uncapped, smooth local camera movement
-            local zoom_speed = move_speed * frame_time * 0.05
-            if bit.band(wasd, 16) ~= 0 then ortho_zoom = ortho_zoom - zoom_speed end
-            if bit.band(wasd, 32) ~= 0 then ortho_zoom = ortho_zoom + zoom_speed end
-            ortho_zoom = math.max(500.0, ortho_zoom)
+            if mouse_x < EDGE_THRESHOLD then pan_x = -1.0
+            elseif mouse_x > sc.extent.width - EDGE_THRESHOLD then pan_x = 1.0 end
+
+            if mouse_y < EDGE_THRESHOLD then pan_z = -1.0
+            elseif mouse_y > sc.extent.height - EDGE_THRESHOLD then pan_z = 1.0 end
 
             local fwd_x = math.sin(cam_yaw)
             local fwd_z = math.cos(cam_yaw)
@@ -382,10 +482,21 @@ local function main()
             local right_z = -math.sin(cam_yaw)
 
             local frame_speed = move_speed * frame_time
-            if bit.band(wasd, 1) ~= 0 then cam_pos.x = cam_pos.x + fwd_x * frame_speed; cam_pos.z = cam_pos.z + fwd_z * frame_speed end
-            if bit.band(wasd, 2) ~= 0 then cam_pos.x = cam_pos.x - fwd_x * frame_speed; cam_pos.z = cam_pos.z - fwd_z * frame_speed end
-            if bit.band(wasd, 4) ~= 0 then cam_pos.x = cam_pos.x - right_x * frame_speed; cam_pos.z = cam_pos.z - right_z * frame_speed end
-            if bit.band(wasd, 8) ~= 0 then cam_pos.x = cam_pos.x + right_x * frame_speed; cam_pos.z = cam_pos.z + right_z * frame_speed end
+            -- Remap 2D screen edges to isometric 3D space
+            cam_pos.x = cam_pos.x + (right_x * pan_x + fwd_x * -pan_z) * frame_speed
+            cam_pos.z = cam_pos.z + (right_z * pan_x + fwd_z * -pan_z) * frame_speed
+
+            -- Snappy Exponential Zoom (Q and E keys)
+            local wasd = ffi.C.vx_input_wasd()
+            local zoom_dir = 0
+            if bit.band(wasd, 16) ~= 0 then zoom_dir = -1 end -- Q
+            if bit.band(wasd, 32) ~= 0 then zoom_dir = 1 end  -- E
+
+            if zoom_dir ~= 0 then
+                -- Math.exp scales much faster at higher altitudes, fixing the sluggish limit
+                ortho_zoom = ortho_zoom * math.exp(zoom_dir * frame_time * 3.0)
+                ortho_zoom = math.max(200.0, math.min(25000.0, ortho_zoom))
+            end
 
             total_time = total_time + frame_time
             pc.total_time = total_time
@@ -448,11 +559,18 @@ local function main()
                 packet.width = sc.extent.width
                 packet.height = sc.extent.height
 
+                -- [NEW] Wire up the ID Buffer and the Mouse Intent
+                packet.id_image = ffi.cast("uint64_t", gfx.idImage)
+                packet.id_view = ffi.cast("uint64_t", gfx.idImageView)
+                packet.picking_buffer = ffi.cast("uint64_t", memory.Buffers["PICK_BUFFER"])
+                packet.pick_x = req_pick_x
+                packet.pick_y = req_pick_y
+
                 local cmd0 = current_queue_ptr[0]
                 local geom_cfg = manifest.graphics.geom
                 cmd0.pipeline_id = ffi.cast("uint64_t", gfx.pipelines["geom"])
                 cmd0.descriptor_set = ffi.cast("uint64_t", desc.set0)
-                cmd0.index_count = 24
+                cmd0.index_count = 36
                 cmd0.first_index = 0
                 cmd0.vertex_offset = 0
                 cmd0.instance_count = total_tiles
@@ -538,6 +656,8 @@ local function main()
 
     memory.DestroyBuffer("PALETTE_STAGING", vk_rt)
     memory.DestroyBuffer("PALETTE_HAVEN", vk_rt)
+    memory.DestroyBuffer("PICK_BUFFER", vk_rt) -- [NEW] Destroy the mailbox
+
     net.Shutdown() -- [NEW] Close the socket gracefully
     memory.DestroyTransferSubsystem(vk_rt)
 

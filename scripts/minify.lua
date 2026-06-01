@@ -80,16 +80,16 @@ print("--- AI SNAPSHOT ---")
 
 local order = {
     -- [ ENTRY POINTS ]
---    "main.lua",
---    "build.lua",
+    "main.lua",
+    "build.lua",
 
     -- [ C-CORE ]
---    "c/main.c",
-    "c/vx_math.c",
+    "c/main.c",
+    "c/vx_net.c",
     "c/shared_structs.h",
 
     -- [ LUA ENGINE MODULES ]
---    "lua/registry_vk.lua",
+    "lua/registry_vk.lua",
 --    "lua/sequence.lua",
 --    "lua/pipeline_manifest.lua",
 --    "lua/vulkan_core.lua",
@@ -100,20 +100,18 @@ local order = {
 --    "lua/compute_pipeline.lua",
 --    "lua/renderer.lua",
 --    "lua/memory.lua",
---    "lua/vmath.lua",
---    "lua/registry_export.lua",
+    "lua/vmath.lua",
+    "lua/registry_export.lua",
 
     -- [ GLSL SHADERS & SSOT ]
---    "glsl/registry.glsl",
---    "glsl/shared.glsl",
---    "glsl/render.vert",
---    "glsl/render.frag",
+    "glsl/registry.glsl",
+    "glsl/shared.glsl",
+    "glsl/render.vert",
+    "glsl/render.frag",
 
 }
 
-for _, src in ipairs(order) do
-    local f = io.open(src, "r")
-    if f then
+for _, src in ipairs(order) do local f = io.open(src, "r") if f then
         local content = f:read("*all")
         local minified_content = ""
 

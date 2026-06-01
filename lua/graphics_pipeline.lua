@@ -84,16 +84,20 @@ local function BuildSinglePipeline(vk, device, layout, colorFormat, vertModule, 
             stencilTestEnable = 0,
         })
 
-    -- INJECT CONFIG: Blending
-    local colorBlendAttachment = ffi.new("VkPipelineColorBlendAttachmentState[1]")
+    -- Expand to 2 attachments
+    local colorBlendAttachment = ffi.new("VkPipelineColorBlendAttachmentState[2]")
+    -- Attachment 0 (Visuals)
     colorBlendAttachment[0].colorWriteMask = vk_pipeline.color_mask_rgba
     colorBlendAttachment[0].blendEnable = config.blend_enable
     colorBlendAttachment[0].srcColorBlendFactor = vk_pipeline.blend_src_alpha
     colorBlendAttachment[0].dstColorBlendFactor = vk_pipeline.blend_one
     colorBlendAttachment[0].srcAlphaBlendFactor = vk_pipeline.blend_one
+    -- Attachment 1 (ID Buffer) -> BLENDING IS STRICTLY FORBIDDEN FOR RAW INTS
+    colorBlendAttachment[1].colorWriteMask = vk_pipeline.color_mask_rgba
+    colorBlendAttachment[1].blendEnable = 0
 
     local colorBlending = ffi.new("VkPipelineColorBlendStateCreateInfo", {
-        sType = vk_struct.pipeline_color_blend_state_create, attachmentCount = 1, pAttachments = colorBlendAttachment
+        sType = vk_struct.pipeline_color_blend_state_create, attachmentCount = 2, pAttachments = colorBlendAttachment
     })
 
     local dynamicStates = ffi.new("VkDynamicState[8]", {
@@ -106,9 +110,10 @@ local function BuildSinglePipeline(vk, device, layout, colorFormat, vertModule, 
         sType = vk_struct.pipeline_dynamic_state_create, dynamicStateCount = 8, pDynamicStates = dynamicStates
     })
 
-    local colorFormats = ffi.new("int32_t[1]", {colorFormat})
+    -- Tell Vulkan about the two formats
+    local colorFormats = ffi.new("int32_t[2]", {colorFormat, vk_format.r32_uint})
     local pipelineRenderingInfo = ffi.new("VkPipelineRenderingCreateInfo", {
-        sType = vk_struct.pipeline_rendering_create, colorAttachmentCount = 1, pColorAttachmentFormats = colorFormats, depthAttachmentFormat = vk_format.d32_sfloat
+        sType = vk_struct.pipeline_rendering_create, colorAttachmentCount = 2, pColorAttachmentFormats = colorFormats, depthAttachmentFormat = vk_format.d32_sfloat
     })
 
     local pipelineInfo = ffi.new("VkGraphicsPipelineCreateInfo[1]")
@@ -162,9 +167,43 @@ function GraphicsPipeline.Init(vk, core_state, width, height, pipelineLayout, co
     })
     local pDepthView = ffi.new("VkImageView[1]"); assert(vk.vkCreateImageView(device, dViewInfo, nil, pDepthView) == 0)
 
-    -- 2. Build Shaders and Pipelines Dynamically
+    -- 1. Create the ID Buffer Image
+    local idImgInfo = ffi.new("VkImageCreateInfo")
+    ffi.fill(idImgInfo, ffi.sizeof(idImgInfo))
+    idImgInfo.sType = vk_struct.image_create
+    idImgInfo.imageType = vk_image.type_2d
+    idImgInfo.extent.width = width
+    idImgInfo.extent.height = height
+    idImgInfo.extent.depth = 1
+    idImgInfo.mipLevels = 1
+    idImgInfo.arrayLayers = 1
+    idImgInfo.format = vk_format.r32_uint
+    idImgInfo.tiling = vk_image.tiling_optimal
+    idImgInfo.initialLayout = vk_layout.undefined
+    idImgInfo.usage = bit.bor(vk_image.usage_color_attachment, vk_image.usage_transfer_src)
+    idImgInfo.samples = vk_image.sample_count_1
+
+    local pIdImage = ffi.new("VkImage[1]")
+    assert(vk.vkCreateImage(device, idImgInfo, nil, pIdImage) == 0)
+
+    -- Allocate Memory (piggybacking on the exact same VRAM constraints as the depth buffer)
+    vk.vkGetImageMemoryRequirements(device, pIdImage[0], memReqs)
+    local idAllocInfo = ffi.new("VkMemoryAllocateInfo", { sType = vk_struct.mem_alloc, allocationSize = memReqs.size, memoryTypeIndex = memoryTypeIndex })
+    local pIdMemory = ffi.new("VkDeviceMemory[1]")
+    assert(vk.vkAllocateMemory(device, idAllocInfo, nil, pIdMemory) == 0)
+    assert(vk.vkBindImageMemory(device, pIdImage[0], pIdMemory[0], 0) == 0)
+
+    -- Create ID View
+    local idViewInfo = ffi.new("VkImageViewCreateInfo", {
+        sType = vk_struct.image_view_create, image = pIdImage[0], viewType = vk_image.view_type_2d, format = vk_format.r32_uint,
+        subresourceRange = { aspectMask = vk_image.aspect_color, levelCount = 1, layerCount = 1 }
+    })
+    local pIdView = ffi.new("VkImageView[1]")
+    assert(vk.vkCreateImageView(device, idViewInfo, nil, pIdView) == 0)
+
     local state = {
         depthImage = pDepthImage[0], depthMemory = pDepthMemory[0], depthImageView = pDepthView[0],
+        idImage = pIdImage[0], idMemory = pIdMemory[0], idImageView = pIdView[0], -- [NEW]
         pipelineLayout = pipelineLayout, colorFormat = colorFormat,
         pipelines = {}, modules = {}, configs = configs -- Save configs for hot reloading!
     }
@@ -204,7 +243,7 @@ function GraphicsPipeline.HotReloadShaders(vk, core_state, gfx_state, current_fr
 end
 
 function GraphicsPipeline.Destroy(vk, core_state, gfx_state)
-    print("[TEARDOWN] Destroying Graphics Pipelines & Depth Buffer...")
+    print("[TEARDOWN] Destroying Graphics Pipelines, Depth Buffer & ID Buffer...")
     if not gfx_state then return end
     local device = type(core_state) == "table" and core_state.device or core_state
 
@@ -219,9 +258,15 @@ function GraphicsPipeline.Destroy(vk, core_state, gfx_state)
     for _, pipe in pairs(gfx_state.pipelines) do vk.vkDestroyPipeline(device, pipe, nil) end
     for _, mod in pairs(gfx_state.modules) do vk.vkDestroyShaderModule(device, mod, nil) end
 
+    -- Destroy the Depth Buffer
     if gfx_state.depthImageView then vk.vkDestroyImageView(device, gfx_state.depthImageView, nil) end
     if gfx_state.depthImage then vk.vkDestroyImage(device, gfx_state.depthImage, nil) end
     if gfx_state.depthMemory then vk.vkFreeMemory(device, gfx_state.depthMemory, nil) end
+
+    -- [NEW] Destroy the ID Harvesting Buffer
+    if gfx_state.idImageView then vk.vkDestroyImageView(device, gfx_state.idImageView, nil) end
+    if gfx_state.idImage then vk.vkDestroyImage(device, gfx_state.idImage, nil) end
+    if gfx_state.idMemory then vk.vkFreeMemory(device, gfx_state.idMemory, nil) end
 end
 
 return GraphicsPipeline

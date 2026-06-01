@@ -62,12 +62,18 @@ typedef struct __attribute__((packed, aligned(64))) {
     uint64_t depth_view;
     uint32_t width;
     uint32_t height;
-    uint8_t _pad_tail[48];
+    uint64_t id_image;
+    uint64_t id_view;
+    uint64_t picking_buffer;
+    int32_t pick_x;
+    int32_t pick_y;
+    uint8_t _pad_tail[16];
 } RenderPacket;
 
 typedef struct __attribute__((packed, aligned(4))) {
     uint32_t frame_tick;
     uint32_t player_input;
+    int32_t click_grid_idx;
 } LockstepPacket;
 
 

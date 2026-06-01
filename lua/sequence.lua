@@ -54,6 +54,9 @@ seq.boot = {
 
             memory.CreateHostVisibleBuffer("PALETTE_STAGING", "uint8_t", palette_bytes, usage_staging, ctx.vk_runtime)
             memory.CreateBufferHaven("PALETTE_HAVEN", palette_bytes, usage_haven, ctx.vk_runtime)
+            -- [NEW] Forge the 4-Byte mailbox to catch the ID
+            -- Usage 2 is VK_BUFFER_USAGE_TRANSFER_DST_BIT
+            memory.CreateHostVisibleBuffer("PICK_BUFFER", "uint32_t", 1, 2, ctx.vk_runtime)
         end
     },
     {

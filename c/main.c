@@ -66,6 +66,12 @@ typedef struct {
     _Atomic uint32_t wasd_mask;
     _Atomic float mouse_dx;
     _Atomic float mouse_dy;
+
+    _Atomic float mouse_x;  // Add this
+    _Atomic float mouse_y;  // Add this
+    _Atomic float click_x;  // NEW: Hardware-latched X
+    _Atomic float click_y;  // NEW: Hardware-latched Y
+
     _Atomic int window_resized;
     _Atomic int win_w;
     _Atomic int win_h;
@@ -104,19 +110,10 @@ bool first_mouse = true;
 static bool s_mouse_captured = false;
 
 void glfw_cursor_callback(GLFWwindow* window, double xpos, double ypos) {
-    // 1. THE GATEKEEPER: If the mouse is free, swallow the movement
-    if (!s_mouse_captured) {
-        last_mx = xpos;
-        last_my = ypos;
-        return;
-    }
-    // 2. Prevent the massive "snap" on the first frame of capture
-    if (first_mouse) {
-        last_mx = xpos;
-        last_my = ypos;
-        first_mouse = false;
-        return;
-    }
+    // Record absolute coordinates for Lua edge-panning
+    atomic_store_explicit(&g_engine.mailbox.mouse_x, (float)xpos, memory_order_release);
+    atomic_store_explicit(&g_engine.mailbox.mouse_y, (float)ypos, memory_order_release);
+
     // 3. Normal Delta Calculation
     float dx = (float)(xpos - last_mx);
     float dy = (float)(ypos - last_my);
@@ -131,13 +128,17 @@ void glfw_cursor_callback(GLFWwindow* window, double xpos, double ypos) {
 
 void glfw_mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
-        if (action == GLFW_PRESS && !s_mouse_captured) {
-            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-            s_mouse_captured = true;
-            first_mouse = true;
+        if (action == GLFW_PRESS) {
+            double cx, cy;
+            glfwGetCursorPos(window, &cx, &cy); // Get exact coordinate of the event
+            atomic_store_explicit(&g_engine.mailbox.click_x, (float)cx, memory_order_release);
+            atomic_store_explicit(&g_engine.mailbox.click_y, (float)cy, memory_order_release);
+            atomic_store_explicit(&g_engine.mailbox.mouse_left, 1, memory_order_release);
+        } else {
+            atomic_store_explicit(&g_engine.mailbox.mouse_left, 0, memory_order_release);
         }
-        atomic_store_explicit(&g_engine.mailbox.mouse_left, (action == GLFW_PRESS) ? 1 : 0, memory_order_release);
     } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+        // DO NOT LOSE THIS!
         atomic_store_explicit(&g_engine.mailbox.mouse_right, (action == GLFW_PRESS) ? 1 : 0, memory_order_release);
     }
 }
@@ -147,6 +148,17 @@ EXPORT int vx_input_mouse_btn(int btn) {
     if (btn == 1) return atomic_load_explicit(&g_engine.mailbox.mouse_right, memory_order_acquire);
     return 0;
 }
+
+EXPORT float vx_input_mouse_x() { return atomic_load_explicit(&g_engine.mailbox.mouse_x, memory_order_acquire); }
+EXPORT float vx_input_mouse_y() { return atomic_load_explicit(&g_engine.mailbox.mouse_y, memory_order_acquire); }
+
+EXPORT float vx_input_click_x() {
+    return atomic_load_explicit(&g_engine.mailbox.click_x, memory_order_acquire);
+}
+EXPORT float vx_input_click_y() {
+    return atomic_load_explicit(&g_engine.mailbox.click_y, memory_order_acquire);
+}
+
 void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     if (action == GLFW_PRESS || action == GLFW_RELEASE) {
         uint32_t bit = 0;
@@ -162,14 +174,8 @@ void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, in
         }
     }
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
-        if (s_mouse_captured) {
-            // Stage 1: Free the mouse
-            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-            s_mouse_captured = false;
-        } else {
-            // Stage 2: Trigger Shutdown if mouse is already free
-            atomic_store_explicit(&g_engine.mailbox.last_key_pressed, GLFW_KEY_ESCAPE, memory_order_release);
-        }
+        // Instantly trigger shutdown, no mouse-capture gatekeeping needed
+        atomic_store_explicit(&g_engine.mailbox.last_key_pressed, GLFW_KEY_ESCAPE, memory_order_release);
     }
     if (key == GLFW_KEY_SPACE) {
         // 1 means pressed or held, 0 means released
@@ -453,7 +459,7 @@ EXPORT void vx_record_commands(VkCommandBuffer cmd, RenderPacket* p, DrawCommand
     vkBeginCommandBuffer(cmd, &beginInfo);
 
     // 2. Setup Render Pass Barriers (Preserved)
-    VkImageMemoryBarrier preBarriers[2] = {0};
+    VkImageMemoryBarrier preBarriers[3] = {0};
     preBarriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     preBarriers[0].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     preBarriers[0].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -468,16 +474,39 @@ EXPORT void vx_record_commands(VkCommandBuffer cmd, RenderPacket* p, DrawCommand
     preBarriers[1].subresourceRange = (VkImageSubresourceRange){VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
     preBarriers[1].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0, NULL, 0, NULL, 2, preBarriers);
+    preBarriers[2].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    preBarriers[2].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    preBarriers[2].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    preBarriers[2].image = (VkImage)p->id_image;
+    preBarriers[2].subresourceRange = (VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    // [FIX] Tell the barrier we are waiting for the previous frame's DMA Transfer to finish!
+    preBarriers[2].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    preBarriers[2].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
-    VkRenderingAttachmentInfoKHR colorAttachment = {
-        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
-        .imageView = (VkImageView)p->swapchain_view,
-        .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-        .clearValue.color = {{0.01f, 0.01f, 0.02f, 1.0f}}
-    };
+    // [FIX] Change TOP_OF_PIPE to explicitly wait for TRANSFER and LATE_FRAGMENT_TESTS
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+        0, 0, NULL, 0, NULL, 3, preBarriers);
+
+    VkRenderingAttachmentInfoKHR colorAttachments[2] = {0};
+
+    colorAttachments[0].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+    colorAttachments[0].imageView = (VkImageView)p->swapchain_view;
+    colorAttachments[0].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    colorAttachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colorAttachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttachments[0].clearValue.color.float32[0] = 0.01f;
+    colorAttachments[0].clearValue.color.float32[1] = 0.01f;
+    colorAttachments[0].clearValue.color.float32[2] = 0.02f;
+    colorAttachments[0].clearValue.color.float32[3] = 1.0f;
+
+    colorAttachments[1].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+    colorAttachments[1].imageView = (VkImageView)p->id_view;
+    colorAttachments[1].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    colorAttachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colorAttachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttachments[1].clearValue.color.uint32[0] = 0xFFFFFFFF; // Clear the void to Max Uint32
 
     VkRenderingAttachmentInfoKHR depthAttachment = {
         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
@@ -492,11 +521,10 @@ EXPORT void vx_record_commands(VkCommandBuffer cmd, RenderPacket* p, DrawCommand
         .sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR,
         .renderArea.extent = {p->width, p->height},
         .layerCount = 1,
-        .colorAttachmentCount = 1,
-        .pColorAttachments = &colorAttachment,
+        .colorAttachmentCount = 2,
+        .pColorAttachments = colorAttachments,
         .pDepthAttachment = &depthAttachment
     };
-
     pfnBegin(cmd, &renderInfo);
 
     // 3. Global Graphics State Setup
@@ -570,7 +598,28 @@ EXPORT void vx_record_commands(VkCommandBuffer cmd, RenderPacket* p, DrawCommand
 
     pfnEnd(cmd);
 
-    // 5. Present Barrier (Preserved)
+    // 3. SURGICAL DMA EXTRACTION (Post-Render)
+    if (p->pick_x >= 0 && p->pick_y >= 0 && p->pick_x < (int32_t)p->width && p->pick_y < (int32_t)p->height) {
+        VkImageMemoryBarrier copyBarrier = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            .image = (VkImage)p->id_image,
+            .subresourceRange = (VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+            .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT
+        };
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &copyBarrier);
+
+        VkBufferImageCopy region = {0};
+        region.imageSubresource = (VkImageSubresourceLayers){VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.imageOffset = (VkOffset3D){p->pick_x, p->pick_y, 0};
+        region.imageExtent = (VkExtent3D){1, 1, 1};
+
+        // Command the GPU to slice out exactly 1 pixel and dump it into our CPU-mapped buffer
+        vkCmdCopyImageToBuffer(cmd, (VkImage)p->id_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, (VkBuffer)p->picking_buffer, 1, &region);
+    }
+    // === RESTORE THIS MISSING BLOCK ===
     VkImageMemoryBarrier presentBarrier = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
         .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -748,6 +797,10 @@ void vx_init_mailbox() {
     atomic_init(&g_engine.mailbox.lua_finished, 0);
     atomic_init(&g_engine.mailbox.vk_instance, NULL);
     atomic_init(&g_engine.mailbox.vk_surface, NULL);
+    atomic_init(&g_engine.mailbox.mouse_x, 0.0f);
+    atomic_init(&g_engine.mailbox.mouse_y, 0.0f);
+    atomic_init(&g_engine.mailbox.click_x, -1.0f); // Initialize to -1
+    atomic_init(&g_engine.mailbox.click_y, -1.0f); // Initialize to -1
 }
 
 THREAD_FUNC lua_co_overlord_loop(void* arg) {

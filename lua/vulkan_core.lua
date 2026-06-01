@@ -176,6 +176,9 @@ function core.finalize_device_and_swapchain(vk_state, surface_ptr, req_extension
     ffi.fill(deviceFeatures, ffi.sizeof(deviceFeatures))
     deviceFeatures.largePoints = 1
 
+    -- [NEW] Tell Vulkan we want to mix-and-match blending modes
+    deviceFeatures.independentBlend = 1
+
     local deviceCreateInfo = ffi.new("VkDeviceCreateInfo")
     ffi.fill(deviceCreateInfo, ffi.sizeof(deviceCreateInfo))
     deviceCreateInfo.sType = vk_struct.device_create

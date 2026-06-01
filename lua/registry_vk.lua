@@ -21,8 +21,13 @@ local reg = {
         swapchain_create = 1000001000, present_info = 1000001001,
     },
     vk_result = { success = 0, error_out_of_date = -1000000001 },
-    vk_format = { b8g8r8a8_srgb = 50, d32_sfloat = 126 },
-    vk_image = { view_type_2d = 1, type_2d = 1, tiling_optimal = 0, usage_color_attachment = 16, usage_depth_attachment = 32, aspect_color = 1, aspect_depth = 2, sample_count_1 = 1 },
+
+    -- 1. Add r32_uint (98) to vk_format
+    vk_format = { b8g8r8a8_srgb = 50, d32_sfloat = 126, r32_uint = 98 },
+
+    -- 2. Add usage_transfer_src (1) to vk_image
+    vk_image = { view_type_2d = 1, type_2d = 1, tiling_optimal = 0, usage_transfer_src = 1, usage_color_attachment = 16, usage_depth_attachment = 32, aspect_color = 1, aspect_depth = 2, sample_count_1 = 1 },
+
     vk_layout = { undefined = 0, color_attachment_optimal = 2, depth_attachment_optimal = 3, present_src = 1000001002 },
     vk_swapchain = { color_space_srgb_nonlinear = 0, composite_alpha_opaque = 1, present_mode_fifo = 2 },
     vk_state = { cull_none = 0, front_ccw = 0, topo_point = 0, topo_tri = 3, cmp_le = 3, cmp_ge = 4, depth_off = 0, depth_on = 1 },
@@ -106,6 +111,7 @@ local reg = {
                 { type = "uint8_t", name = "topology" }
             }
         },
+        -- 3. Add the Picking hooks to the bottom of RenderPacket
         {
             name = "RenderPacket", c_only = true, align = 64, force_align = true,
             members = {
@@ -119,14 +125,21 @@ local reg = {
                 { type = "uint64_t", name = "depth_image" },
                 { type = "uint64_t", name = "depth_view" },
                 { type = "uint32_t", name = "width" },
-                { type = "uint32_t", name = "height" }
+                { type = "uint32_t", name = "height" },
+                -- [NEW ELEMENTS BELOW]
+                { type = "uint64_t", name = "id_image" },
+                { type = "uint64_t", name = "id_view" },
+                { type = "uint64_t", name = "picking_buffer" },
+                { type = "int32_t", name = "pick_x" },
+                { type = "int32_t", name = "pick_y" }
             }
         },
         {
             name = "LockstepPacket", c_only = true, align = 4, force_align = true,
             members = {
                 { type = "uint32_t", name = "frame_tick" },
-                { type = "uint32_t", name = "player_input" } -- Maps to vx_input_wasd()
+                { type = "uint32_t", name = "player_input" }, -- Maps to vx_input_wasd()
+                { type = "int32_t", name = "click_grid_idx" }
             }
         },
     }
