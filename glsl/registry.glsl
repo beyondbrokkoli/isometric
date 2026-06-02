@@ -13,7 +13,7 @@ const uint CFG_PC_SIZE = 128U;
 const uint CFG_PCOUNT = 1000000U;
 const uint CFG_SWAP_SLOTS = 10U;
 const uint CFG_SWARM_STATES = 7U;
-const uint CFG_USE_VALIDATION = 1U;
+const uint CFG_USE_VALIDATION = 0U;
 const uint CFG_VK_API_VERSION = 4206592U;
 
 // --- std430 SSBO DEFINITIONS ---

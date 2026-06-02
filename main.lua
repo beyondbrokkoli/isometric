@@ -2,8 +2,7 @@ package.path = "./lua/?.lua;" .. package.path
 local ffi = require("ffi")
 local math = require("math")
 local bit = require("bit")
-
--- DECOUPLED IMPORTS
+local vmath = require("vmath")
 local seq = require("sequence")
 local cfg = require("config_engine")
 local manifest = require("pipeline_manifest")
@@ -17,34 +16,31 @@ ffi.cdef[[
     void vx_core_shutdown();
     void vx_core_mark_finished();
 
-    // OS Timers
     int QueryPerformanceCounter(int64_t *lpPerformanceCount);
     int QueryPerformanceFrequency(int64_t *lpFrequency);
     typedef struct { long tv_sec; long tv_nsec; } timespec;
     int clock_gettime(int clk_id, timespec *tp);
 
-    // C-Core Runtime Interfaces
     int vx_input_last_key();
     uint32_t vx_input_wasd();
     float vx_input_mouse_dx();
     float vx_input_mouse_dy();
-
     float vx_input_mouse_x();
     float vx_input_mouse_y();
     float vx_input_click_x();
     float vx_input_click_y();
     int vx_input_is_captured();
-
     int vx_sys_resize_flag();
     void vx_sys_window_size(int* w, int* h);
     int vx_input_mouse_btn(int btn);
     int vx_input_spacebar();
 
-    // Ring Buffer Interfaces
     int vx_stream_acquire();
     RenderPacket* vx_stream_packet(int idx);
     void vx_stream_commit(int idx);
     void vx_thread_kill();
+
+    typedef struct __attribute__((aligned(16))) { float x, y, z, w; } vec4_t;
 ]]
 
 local function sys_sleep(ms)
@@ -87,23 +83,87 @@ local function boot_weaver()
     return ctx
 end
 
+local temp_vec_near = ffi.new("vec4_t")
+local temp_vec_far = ffi.new("vec4_t")
+local function matrix_raycast_terrain(mouse_x, mouse_y, screen_w, screen_h, viewProj_inv, grid, map_w, map_h, spacing)
+    -- 1. Screen to NDC (Vulkan Y-axis is down, check your projection flip if needed)
+    local nx = (mouse_x / screen_w) * 2.0 - 1.0
+    local ny = (mouse_y / screen_h) * 2.0 - 1.0 
+
+    -- 2. Unproject near (Z=0.0) and far (Z=1.0) points
+    vmath.multiply_mat4_vec4(viewProj_inv, nx, ny, 0.0, 1.0, temp_vec_near)
+    vmath.multiply_mat4_vec4(viewProj_inv, nx, ny, 1.0, 1.0, temp_vec_far)
+
+    -- Perspective divide
+    local near_w = 1.0 / temp_vec_near.w
+    local ox = temp_vec_near.x * near_w
+    local oy = temp_vec_near.y * near_w
+    local oz = temp_vec_near.z * near_w
+
+    local far_w = 1.0 / temp_vec_far.w
+    local fx = temp_vec_far.x * far_w
+    local fy = temp_vec_far.y * far_w
+    local fz = temp_vec_far.z * far_w
+
+    -- Ray direction
+    local dx = fx - ox
+    local dy = fy - oy
+    local dz = fz - oz
+    local inv_mag = 1.0 / math.sqrt(dx^2 + dy^2 + dz^2)
+    dx, dy, dz = dx * inv_mag, dy * inv_mag, dz * inv_mag
+
+    -- 3. Intersect with data-driven grid
+    local offset_x = (map_w * spacing) / 2.0
+    local offset_z = (map_h * spacing) / 2.0
+    
+    -- Step along the ray (simplified intersection for grid elevations)
+    local t = 0.0
+    for i = 1, 400 do
+        local px = ox + dx * t
+        local py = oy + dy * t
+        local pz = oz + dz * t
+        
+        local grid_x = math.floor((px + offset_x) / spacing + 0.5)
+        local grid_z = math.floor((pz + offset_z) / spacing + 0.5)
+        
+        if grid_x >= 0 and grid_x < map_w and grid_z >= 0 and grid_z < map_h then
+            local idx = grid_z * map_w + grid_x
+            if py <= grid.elevation[idx] then
+                return idx
+            end
+        end
+        t = t + (spacing * 0.25) -- Advance a fraction of a tile
+    end
+    return -1
+end
+
 local function main()
-    print("      WEAVER NETWORK INITIALIZATION")
+    print(" WEAVER NETWORK INITIALIZATION")
     print("Press [ENTER] to boot as HOST.")
     print("Type any key then [ENTER] to boot as CLIENT.")
     io.write("> ")
     local user_input = io.read("*l")
-
     local is_host = (user_input == "")
+
     local my_port = is_host and 27015 or 27016
     local target_port = is_host and 27016 or 27015
+    local target_ip = "127.0.0.1"
+
+    if not is_host then
+        print("Enter Host IP Address (leave blank for 127.0.0.1):")
+        io.write("> ")
+        local ip_input = io.read("*l")
+        if ip_input ~= "" then
+            target_ip = ip_input
+        end
+    end
 
     local net = require("network")
     assert(net.Host(my_port), "FATAL: Failed to bind local network port!")
-    assert(net.Connect("127.0.0.1", target_port), "FATAL: Failed to set remote target!")
+    assert(net.Connect(target_ip, target_port), "FATAL: Failed to set remote target!")
 
-    print(string.format("[NET] Socket Online. Role: %s | Port: %d -> Target: %d\n",
-          is_host and "HOST" or "CLIENT", my_port, target_port))
+    print(string.format("[NET] Socket Online. Role: %s | Port: %d -> Target: %s:%d\n",
+          is_host and "HOST" or "CLIENT", my_port, target_ip, target_port))
 
     print("[LUA IO] Booting Headless Weaver (LABORATORY)...")
     local co = coroutine.create(boot_weaver)
@@ -136,44 +196,49 @@ local function main()
         entity = memory.AVX_Arrays["entity_id"]
     }
 
-    local spacing = 20.0
+    local spacing = 1.0
     local offset_x = (MAP_WIDTH * spacing) / 2.0
     local offset_z = (MAP_HEIGHT * spacing) / 2.0
 
-    -- Subtractive Cleanup: Flatten the Pizza World into a true testing tabletop
+    local cx, cz = math.floor(MAP_WIDTH / 2), math.floor(MAP_HEIGHT / 2)
+
     for z = 0, MAP_HEIGHT - 1 do
         for x = 0, MAP_WIDTH - 1 do
             local idx = z * MAP_WIDTH + x
-            rts_grid.elevation[idx] = 0.0 -- Perfect flat baseline
-            rts_grid.terrain[idx] = 0     -- Uniform grass canvas
+            rts_grid.elevation[idx] = 0.0 
+            rts_grid.terrain[idx] = 0 -- Grass Canvas
         end
     end
+
+    -- Paint the Crosshair
+    rts_grid.terrain[cz * MAP_WIDTH + cx] = 10 -- CENTER (White)
+    for x = cx + 1, cx + 5 do rts_grid.terrain[cz * MAP_WIDTH + x] = 11 end -- X-Axis (Red)
+    for z = cz + 1, cz + 5 do rts_grid.terrain[z * MAP_WIDTH + cx] = 12 end -- Z-Axis (Blue)
+
+    -- Paint the Bounding Box Corners
+    rts_grid.terrain[(cz - 5) * MAP_WIDTH + (cx - 5)] = 13 -- Top Left (Magenta)
+    rts_grid.terrain[(cz - 5) * MAP_WIDTH + (cx + 5)] = 13 -- Top Right (Magenta)
+    rts_grid.terrain[(cz + 5) * MAP_WIDTH + (cx - 5)] = 13 -- Bottom Left (Magenta)
+    rts_grid.terrain[(cz + 5) * MAP_WIDTH + (cx + 5)] = 13 -- Bottom Right (Magenta)
 
     print("[LUA CO] Initializing VRAM Index Buffer with Strict Topology...")
     local index_ptr = ffi.cast("uint32_t*", memory.Mapped["MASTER_INDEX_BLOCK"])
 
-    -- Expanded from 24 to 36 indices to close the back walls
     local iso_indices = ffi.new("uint32_t[36]", {
-        -- TOP PYRAMID ROOF
         0, 2, 3,
         0, 3, 4,
         0, 4, 5,
         0, 5, 2,
-        -- WALL 1 (South-West)
         2, 6, 7,
         2, 7, 3,
-        -- WALL 2 (South-East)  <-- FIX: Index 8 replaced with 11
         3, 7, 11,
         3, 11, 4,
-        -- WALL 3 (North-East)  <-- NEW: Encloses the back
         4, 11, 10,
         4, 10, 5,
-        -- WALL 4 (North-West)  <-- NEW: Encloses the back
         5, 10, 6,
         5, 6, 2
     })
 
-    -- Increase the copy size to match 36 indices (36 * 4 bytes)
     ffi.copy(index_ptr, iso_indices, 36 * 4)
 
     local MAX_DRAW_COMMANDS = 1024
@@ -188,10 +253,12 @@ local function main()
     pc.dt = 0.0
 
     local proj, view = ffi.new("mat4_t"), ffi.new("mat4_t")
-    local ortho_zoom = 5000.0
+    local inv_vp = ffi.new("mat4_t") -- ADD THIS HERE
+
+    local ortho_zoom = 250.0
     local cam_yaw, cam_pitch = 0.785398, 0.615472
     local cam_pos = {x = 0.0, y = 0.0, z = 0.0}
-    local move_speed = 4000.0
+    local move_speed = 200.0
 
     local total_time = 0.0
     local wants_hotswap = false
@@ -209,45 +276,31 @@ local function main()
     local FIXED_DT = 1.0 / TICK_RATE
     local sim_tick_count = 0
 
-    -- DIRECTIVE ZETA: ASYNC TRANSFER DISPATCH
     print("[LUA CO] Packing Data-Driven Color Palette...")
-
-    -- 1. Grab the mapped CPU pointer for the Staging Arena
     local staging_ptr = ffi.cast("float*", memory.Mapped["PALETTE_STAGING"])
 
-    -- 2. Write the Palette (RGBA Floats)
-    -- Terrain ID 0: Grass (Green)
-    staging_ptr[0] = 0.2; staging_ptr[1] = 0.8; staging_ptr[2] = 0.2; staging_ptr[3] = 1.0;
+    -- Default/Player Colors
+    staging_ptr[0] = 0.2; staging_ptr[1] = 0.8; staging_ptr[2] = 0.2; staging_ptr[3] = 1.0
+    staging_ptr[4] = 0.2; staging_ptr[5] = 0.5; staging_ptr[6] = 1.0; staging_ptr[7] = 1.0
+    staging_ptr[8] = 1.0; staging_ptr[9] = 0.2; staging_ptr[10] = 0.2; staging_ptr[11] = 1.0
 
-    -- Terrain ID 1: Local Player (Blue)
-    staging_ptr[4] = 0.2; staging_ptr[5] = 0.5; staging_ptr[6] = 1.0; staging_ptr[7] = 1.0;
+    -- Calibration Colors (Offsets: ID * 4)
+    staging_ptr[40] = 1.0; staging_ptr[41] = 1.0; staging_ptr[42] = 1.0; staging_ptr[43] = 1.0 -- 10: White (Center)
+    staging_ptr[44] = 1.0; staging_ptr[45] = 0.0; staging_ptr[46] = 0.0; staging_ptr[47] = 1.0 -- 11: Red (+X)
+    staging_ptr[48] = 0.0; staging_ptr[49] = 0.0; staging_ptr[50] = 1.0; staging_ptr[51] = 1.0 -- 12: Blue (+Z)
+    staging_ptr[52] = 1.0; staging_ptr[53] = 0.0; staging_ptr[54] = 1.0; staging_ptr[55] = 1.0 -- 13: Magenta (Corners)
 
-    -- Terrain ID 2: Remote Player (Red)
-    staging_ptr[8] = 1.0; staging_ptr[9] = 0.2; staging_ptr[10] = 0.2; staging_ptr[11] = 1.0;
-
-    -- Terrain ID 255: Stone (Grey) -> Note: ID 255 is offset 255 * 4 = 1020
-    staging_ptr[1020] = 0.5; staging_ptr[1021] = 0.5; staging_ptr[1022] = 0.5; staging_ptr[1023] = 1.0;
-    -- 3. Fire the DMA Transfer (16 KB payload)
     local palette_job_id = memory.TransferAsync("PALETTE_STAGING", "PALETTE_HAVEN", 16384)
     local palette_ready = false
 
-    -- [NEW] Map the ID Harvesting Mailbox
-    local pick_ptr = ffi.cast("uint32_t*", memory.Mapped["PICK_BUFFER"])
-    pick_ptr[0] = 0xFFFFFFFF
-    local pick_countdown = 0 -- [NEW]
-
     print("[LUA CO] Entering Deterministic Lockstep Render Loop...")
 
-    -- Replace your old function with this to turn the grid into a static canvas
     local function update_simulation(grid, dt, tick_count)
-        -- No more sine waves or terrain overwrites!
-        -- The terrain is entirely driven by player input now.
     end
 
     local gfx_pipeline_module = require("graphics_pipeline");
     local pump_deletion_queue = gfx_pipeline_module.PumpDeletionQueue;
 
-    -- [NEW] Data-Driven Network Payloads
     local PACKET_SIZE = ffi.sizeof("LockstepPacket")
     local in_packet = ffi.new("LockstepPacket")
     local out_packet = ffi.new("LockstepPacket")
@@ -257,49 +310,32 @@ local function main()
     out_packet.player_input = ffi.C.vx_input_wasd()
     net.Send(out_packet, PACKET_SIZE)
 
-    -- Spawn coordinates for our lockstep entities
-    local local_avatar = {
-        x = is_host and 64 or 192,
-        z = is_host and 64 or 192,
-        id = 1 -- Always Blue locally
-    }
-
-    local remote_avatar = {
-        x = is_host and 192 or 64,
-        z = is_host and 192 or 64,
-        id = 2 -- Always Red remotely
-    }
+    local local_avatar = { x = is_host and 64 or 192, z = is_host and 64 or 192, id = 1 }
+    local remote_avatar = { x = is_host and 192 or 64, z = is_host and 192 or 64, id = 2 }
 
     local function apply_locomotion(grid, avatar, input_mask, tick_count)
-        -- Throttle movement to 10 tiles per second
         if tick_count % 6 ~= 0 then return end
         if input_mask == 0 then return end
 
-        -- 1. Erase the old footprint (Restore to Grass)
         local old_idx = avatar.z * MAP_WIDTH + avatar.x
         grid.terrain[old_idx] = 0
-        grid.elevation[old_idx] = 0.0 -- FIX: Smashes the old tile back flat
+        grid.elevation[old_idx] = 0.0 
 
-        -- 2. Decode the Bitmask (W=1, S=2, A=4, D=8)
         if bit.band(input_mask, 1) ~= 0 then avatar.z = avatar.z - 1 end
         if bit.band(input_mask, 2) ~= 0 then avatar.z = avatar.z + 1 end
         if bit.band(input_mask, 4) ~= 0 then avatar.x = avatar.x - 1 end
         if bit.band(input_mask, 8) ~= 0 then avatar.x = avatar.x + 1 end
 
-        -- 3. Strict Deterministic Bounds Checking
         avatar.x = math.max(0, math.min(MAP_WIDTH - 1, avatar.x))
         avatar.z = math.max(0, math.min(MAP_HEIGHT - 1, avatar.z))
 
-        -- 4. Engrave the new physical presence
         local new_idx = avatar.z * MAP_WIDTH + avatar.x
         grid.terrain[new_idx] = avatar.id
-        grid.elevation[new_idx] = 80.0 -- Spike the elevation so they literally stand out
+        grid.elevation[new_idx] = 4.0
     end
 
     local prev_mouse_left = 0
     local pending_click = -1
-    local pick_countdown = 0
-    local latched_pick_x, latched_pick_y = -1, -1
 
     out_packet.click_grid_idx = -1
 
@@ -317,7 +353,6 @@ local function main()
 
                 if new_w[0] > 0 and new_h[0] > 0 then
                     print("\n[LUA CO] Window Stable. Initiating Mini-Weaver Rebuild...")
-
                     ffi.C.vx_thread_kill()
                     vk_rt.vk.vkDeviceWaitIdle(vk_rt.device)
 
@@ -348,15 +383,12 @@ local function main()
                     end
 
                     require("swapchain").Destroy(vk_rt.vk, vk_rt, sc)
-
                     sc = new_ctx.sc_state
                     gfx = new_ctx.gfx_state
                     sync = new_ctx.sync_state
-
                     seq.boot[10].action(new_ctx)
 
                     print("[LUA CO] Mini-Weaver Rebuild Complete.\n")
-
                     is_resizing = false
                     last_time = get_time_hires()
                 else
@@ -364,13 +396,10 @@ local function main()
                 end
             end
         else
-            -- Asynchronous Job Polling
             if not palette_ready and palette_job_id ~= -1 then
                 if memory.IsTransferComplete(vk_rt, palette_job_id) then
                     print("[LUA CO] Async Transfer Complete! Palette Haven Online.")
                     palette_ready = true
-                    -- In the future, this is where you flip a bit in PushConstants
-                    -- to tell the shader: "Hey, the colors are ready, stop using defaults!"
                 end
             end
 
@@ -379,59 +408,47 @@ local function main()
             last_time = current_time
             accumulator = accumulator + frame_time
 
-            local req_pick_x, req_pick_y = -1, -1
-            local harvested_id = pick_ptr[0]
-
-            if harvested_id ~= 0xFFFFFFFF then
-                pending_click = harvested_id
-                pick_ptr[0] = 0xFFFFFFFF
-                pick_countdown = 0 -- Instantly abort the countdown once we get our answer!
-            end
-
             local mouse_left = ffi.C.vx_input_mouse_btn(0)
-            -- RESTORE THESE TWO LINES: The camera still needs live coordinates for edge-panning!
             local mouse_x = ffi.C.vx_input_mouse_x()
             local mouse_y = ffi.C.vx_input_mouse_y()
 
+            -- SURGICAL ADDITION: Zero-Latency Synchronous Raycast (Matrix Driven)
             if mouse_left == 1 and prev_mouse_left == 0 then
-                -- 1. HARDWARE LATCH: Get exact click coordinates
-                latched_pick_x = math.floor(ffi.C.vx_input_click_x())
-                latched_pick_y = math.floor(ffi.C.vx_input_click_y())
+                local click_x = ffi.C.vx_input_click_x()
+                local click_y = ffi.C.vx_input_click_y()
 
-                -- 2. MULTI-FRAME INJECTION: Spam it into the ring buffer
-                pick_countdown = 5 -- Boosted to 5 to be bulletproof against high Lua FPS
+                -- Replaced DDA with Matrix Unprojection
+                local clicked_idx = matrix_raycast_terrain(
+                    click_x, click_y,
+                    sc.extent.width, sc.extent.height,
+                    inv_vp, -- Passing the inverted matrix here
+                    rts_grid, MAP_WIDTH, MAP_HEIGHT, spacing
+                )
+
+                if clicked_idx ~= -1 then
+                    pending_click = clicked_idx
+                end
             end
             prev_mouse_left = mouse_left
 
-            if pick_countdown > 0 then
-                -- Safely feed the exact same latched coordinate every frame
-                req_pick_x = latched_pick_x
-                req_pick_y = latched_pick_y
-                pick_countdown = pick_countdown - 1
-            end
-
-            -- 2. DETERMINISTIC LOCKSTEP LOOP
             while accumulator >= FIXED_DT do
                 if not net.Poll(in_packet, PACKET_SIZE) then break end
 
                 local current_local_input = ffi.C.vx_input_wasd()
 
-                -- Consume local click for this tick
                 local local_click = pending_click
                 pending_click = -1
 
-                -- Apply Standard Locomotion
                 apply_locomotion(rts_grid, local_avatar, current_local_input, sim_tick_count)
                 apply_locomotion(rts_grid, remote_avatar, in_packet.player_input, sim_tick_count)
 
-                -- Apply Deterministic Mouse Picking
                 if local_click ~= -1 then
                     if rts_grid.terrain[local_click] == 0 then
                         rts_grid.terrain[local_click] = local_avatar.id
-                        rts_grid.elevation[local_click] = 50.0 -- Visual feedback pop
+                        rts_grid.elevation[local_click] = 2.5
                     else
                         rts_grid.terrain[local_click] = 0
-                        rts_grid.elevation[local_click] = 0.0  -- FIX: Flatten when toggled off
+                        rts_grid.elevation[local_click] = 0.0 
                     end
                 end
 
@@ -449,7 +466,6 @@ local function main()
                 update_simulation(rts_grid, FIXED_DT, sim_tick_count)
                 sim_tick_count = sim_tick_count + 1
 
-                -- Broadcast State
                 out_packet.frame_tick = sim_tick_count
                 out_packet.player_input = current_local_input
                 out_packet.click_grid_idx = local_click
@@ -458,7 +474,6 @@ local function main()
                 accumulator = accumulator - FIXED_DT
             end
 
-            -- This handles the Escape key, the Window 'X' button, and mode toggles
             local last_key = ffi.C.vx_input_last_key()
             if last_key == cfg.key.esc then ffi.C.vx_core_shutdown()
             elseif last_key == cfg.key.f5 then wants_hotswap = true
@@ -467,14 +482,10 @@ local function main()
             elseif last_key == cfg.key.num3 then active_render_mode = cfg.mode.points
             end
 
-            -- 3. CAMERA OVERHAUL: EDGE PANNING & EXPONENTIAL ZOOM
             local EDGE_THRESHOLD = 40.0
             local pan_x, pan_z = 0.0, 0.0
-
-            -- Query the C-Core Mailbox for the F10 state
             local is_captured = ffi.C.vx_input_is_captured() == 1
 
-            -- ONLY calculate edge panning if the mouse is clamped to the game window!
             if is_captured then
                 if mouse_x < EDGE_THRESHOLD then pan_x = -1.0
                 elseif mouse_x > sc.extent.width - EDGE_THRESHOLD then pan_x = 1.0 end
@@ -489,18 +500,15 @@ local function main()
             local right_z = -math.sin(cam_yaw)
 
             local frame_speed = move_speed * frame_time
-            -- Remap 2D screen edges to isometric 3D space
             cam_pos.x = cam_pos.x + (right_x * pan_x + fwd_x * -pan_z) * frame_speed
             cam_pos.z = cam_pos.z + (right_z * pan_x + fwd_z * -pan_z) * frame_speed
 
-            -- Snappy Exponential Zoom (Q and E keys)
             local wasd = ffi.C.vx_input_wasd()
             local zoom_dir = 0
-            if bit.band(wasd, 16) ~= 0 then zoom_dir = -1 end -- Q
-            if bit.band(wasd, 32) ~= 0 then zoom_dir = 1 end  -- E
+            if bit.band(wasd, 16) ~= 0 then zoom_dir = -1 end
+            if bit.band(wasd, 32) ~= 0 then zoom_dir = 1 end
 
             if zoom_dir ~= 0 then
-                -- Math.exp scales much faster at higher altitudes, fixing the sluggish limit
                 ortho_zoom = ortho_zoom * math.exp(zoom_dir * frame_time * 3.0)
                 ortho_zoom = math.max(200.0, math.min(25000.0, ortho_zoom))
             end
@@ -508,25 +516,25 @@ local function main()
             total_time = total_time + frame_time
             pc.total_time = total_time
 
-            -- Camera logic belongs in the render domain for maximum smoothness
             local aspect = sc.extent.width / math.max(1, sc.extent.height)
             vmath.ortho_vk(-ortho_zoom * aspect, ortho_zoom * aspect, -ortho_zoom, ortho_zoom, -10000.0, 10000.0, proj)
 
             local look_x = math.sin(cam_yaw) * math.cos(cam_pitch)
             local look_y = -math.sin(cam_pitch)
             local look_z = math.cos(cam_yaw) * math.cos(cam_pitch)
+
             vmath.lookAt(cam_pos.x, cam_pos.y, cam_pos.z, cam_pos.x + look_x, cam_pos.y + look_y, cam_pos.z + look_z, view)
 
+            -- Multiply your View and Projection for Vulkan
             vmath.multiply_mat4(proj, view, pc.viewProj)
+
+            -- ADD THIS LINE: Invert it for the CPU raycaster to use on the next frame
+            vmath.inverse_mat4(pc.viewProj, inv_vp)
 
             local write_idx = ffi.C.vx_stream_acquire()
 
             if write_idx ~= -1 then
-                -- Pass alpha to the GPU. The Vertex Shader can use this to lerp
-                -- between the previous grid state and current grid state for silky smooth 144hz+ visuals!
-                -- RENDER DOMAIN (Interpolated Handoff)
                 local alpha = accumulator / FIXED_DT
-                -- Pass alpha to the GPU for grid vertex interpolation
                 pc.dt = alpha
 
                 local FRAME_BYTES = total_tiles * ffi.sizeof("RtsTileInstance")
@@ -566,12 +574,7 @@ local function main()
                 packet.width = sc.extent.width
                 packet.height = sc.extent.height
 
-                -- [NEW] Wire up the ID Buffer and the Mouse Intent
-                packet.id_image = ffi.cast("uint64_t", gfx.idImage)
-                packet.id_view = ffi.cast("uint64_t", gfx.idImageView)
-                packet.picking_buffer = ffi.cast("uint64_t", memory.Buffers["PICK_BUFFER"])
-                packet.pick_x = req_pick_x
-                packet.pick_y = req_pick_y
+                -- PURGED: All references to id_image, id_view, picking_buffer, pick_x, pick_y
 
                 local cmd0 = current_queue_ptr[0]
                 local geom_cfg = manifest.graphics.geom
@@ -652,7 +655,7 @@ local function main()
     vk_rt.vk.vkDeviceWaitIdle(vk_rt.device)
 
     require("graphics_pipeline").Destroy(vk_rt.vk, vk_rt, gfx)
-    require("compute_pipeline").Destroy(vk_rt.vk, vk_rt, comp)
+    require("compute_pipeline").Destroy(vk_rt.vk, vk_rt, engine_ctx.comp_state)
     require("descriptors").Destroy(vk_rt.vk, vk_rt.device, desc)
     require("swapchain").Destroy(vk_rt.vk, vk_rt, sc)
     require("renderer").Destroy(vk_rt.vk, vk_rt.device, sync, cfg.cfg.frame_slots)
@@ -663,9 +666,8 @@ local function main()
 
     memory.DestroyBuffer("PALETTE_STAGING", vk_rt)
     memory.DestroyBuffer("PALETTE_HAVEN", vk_rt)
-    memory.DestroyBuffer("PICK_BUFFER", vk_rt) -- [NEW] Destroy the mailbox
 
-    net.Shutdown() -- [NEW] Close the socket gracefully
+    net.Shutdown() 
     memory.DestroyTransferSubsystem(vk_rt)
 
     require("vulkan_core").Destroy(vk_rt)

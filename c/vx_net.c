@@ -192,15 +192,21 @@ EXPORT int vx_net_poll(void* out_buffer, size_t expected_len) {
 
     struct sockaddr_in from;
     socklen_t from_len = sizeof(from);
-
-    ssize_t recvd = recvfrom(g_net.sock, (char*)out_buffer, expected_len, 0,
-                             (struct sockaddr*)&from, &from_len);
+    ssize_t recvd = recvfrom(g_net.sock, (char*)out_buffer, expected_len, 0, (struct sockaddr*)&from, &from_len);
 
     if (recvd == expected_len) {
-        return 1; // Success!
+        // ANTI-BOILERPLATE UDP LATCH:
+        // Overwrite the destination address with the sender's address.
+        // This allows the Host to effortlessly route replies to a LAN Client
+        // without knowing the Client's IP at boot.
+        g_net.remote_addr = from;
+        g_net.remote_addr_len = from_len;
+        g_net.is_connected = 1;
+
+        return 1;
     }
 
-    return 0; // Nothing waiting, or truncated packet
+    return 0;
 }
 
 /**

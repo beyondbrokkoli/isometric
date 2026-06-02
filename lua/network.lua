@@ -9,12 +9,17 @@ ffi.cdef[[
     void vx_net_shutdown(void);
 ]]
 
--- Dynamically load the backend based on OS
-local success, net_lib = pcall(ffi.load, "./bin/libvx_net.so")
-if not success then
-    success, net_lib = pcall(ffi.load, "./bin/vx_net.dll")
+local net_lib
+
+-- Route the loader strictly by OS to avoid Windows 'Bad Image' popups
+if jit.os == "Windows" then
+    net_lib = ffi.load("./bin/vx_net.dll")
+else
+    net_lib = ffi.load("./bin/libvx_net.so")
 end
-assert(success, "FATAL: Could not load Networking Backend!")
+
+-- We can still assert in case the correct file is genuinely missing
+assert(net_lib, "FATAL: Could not load Networking Backend for " .. jit.os .. "!")
 
 local Network = {}
 

@@ -477,8 +477,8 @@ EXPORT void vx_record_commands(VkCommandBuffer cmd, RenderPacket* p, DrawCommand
     VkCommandBufferBeginInfo beginInfo = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
     vkBeginCommandBuffer(cmd, &beginInfo);
 
-    // 2. Setup Render Pass Barriers (Preserved)
-    VkImageMemoryBarrier preBarriers[3] = {0};
+    // 2. Setup Render Pass Barriers (Cleansed of ID Buffer logic)
+    VkImageMemoryBarrier preBarriers[2] = {0};
     preBarriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     preBarriers[0].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     preBarriers[0].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -493,39 +493,22 @@ EXPORT void vx_record_commands(VkCommandBuffer cmd, RenderPacket* p, DrawCommand
     preBarriers[1].subresourceRange = (VkImageSubresourceRange){VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
     preBarriers[1].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
-    preBarriers[2].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    preBarriers[2].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    preBarriers[2].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    preBarriers[2].image = (VkImage)p->id_image;
-    preBarriers[2].subresourceRange = (VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    // [FIX] Tell the barrier we are waiting for the previous frame's DMA Transfer to finish!
-    preBarriers[2].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    preBarriers[2].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-
-    // [FIX] Change TOP_OF_PIPE to explicitly wait for TRANSFER and LATE_FRAGMENT_TESTS
+    // Standard Fast-Path Barrier: Wait on TOP_OF_PIPE
     vkCmdPipelineBarrier(cmd,
-        VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-        0, 0, NULL, 0, NULL, 3, preBarriers);
+        0, 0, NULL, 0, NULL, 2, preBarriers);
 
-    VkRenderingAttachmentInfoKHR colorAttachments[2] = {0};
-
-    colorAttachments[0].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
-    colorAttachments[0].imageView = (VkImageView)p->swapchain_view;
-    colorAttachments[0].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    colorAttachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    colorAttachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    colorAttachments[0].clearValue.color.float32[0] = 0.01f;
-    colorAttachments[0].clearValue.color.float32[1] = 0.01f;
-    colorAttachments[0].clearValue.color.float32[2] = 0.02f;
-    colorAttachments[0].clearValue.color.float32[3] = 1.0f;
-
-    colorAttachments[1].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
-    colorAttachments[1].imageView = (VkImageView)p->id_view;
-    colorAttachments[1].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    colorAttachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    colorAttachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    colorAttachments[1].clearValue.color.uint32[0] = 0xFFFFFFFF; // Clear the void to Max Uint32
+    VkRenderingAttachmentInfoKHR colorAttachment = {0};
+    colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+    colorAttachment.imageView = (VkImageView)p->swapchain_view;
+    colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttachment.clearValue.color.float32[0] = 0.01f;
+    colorAttachment.clearValue.color.float32[1] = 0.01f;
+    colorAttachment.clearValue.color.float32[2] = 0.02f;
+    colorAttachment.clearValue.color.float32[3] = 1.0f;
 
     VkRenderingAttachmentInfoKHR depthAttachment = {
         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
@@ -540,8 +523,8 @@ EXPORT void vx_record_commands(VkCommandBuffer cmd, RenderPacket* p, DrawCommand
         .sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR,
         .renderArea.extent = {p->width, p->height},
         .layerCount = 1,
-        .colorAttachmentCount = 2,
-        .pColorAttachments = colorAttachments,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &colorAttachment,
         .pDepthAttachment = &depthAttachment
     };
     pfnBegin(cmd, &renderInfo);
@@ -558,7 +541,6 @@ EXPORT void vx_record_commands(VkCommandBuffer cmd, RenderPacket* p, DrawCommand
 
     // --- BIND THE INDEX BUFFER ---
     VkBuffer ibo = (VkBuffer)p->index_buffer;
-    // VK_INDEX_TYPE_UINT32 because we allocated our MASTER_INDEX_BLOCK as uint32_t
     vkCmdBindIndexBuffer(cmd, ibo, 0, VK_INDEX_TYPE_UINT32);
 
     PFN_vkCmdSetCullModeEXT vkCmdSetCullModeEXT = (PFN_vkCmdSetCullModeEXT)g_wsi.pfnSetCullMode;
@@ -586,7 +568,6 @@ EXPORT void vx_record_commands(VkCommandBuffer cmd, RenderPacket* p, DrawCommand
             current_descriptor = draw->descriptor_set;
         }
 
-        // Apply Dynamic States from the payload
         VkRect2D scissor = {
             .offset = { (int32_t)draw->scissor_x, (int32_t)draw->scissor_y },
             .extent = { (uint32_t)draw->scissor_w, (uint32_t)draw->scissor_h }
@@ -617,28 +598,7 @@ EXPORT void vx_record_commands(VkCommandBuffer cmd, RenderPacket* p, DrawCommand
 
     pfnEnd(cmd);
 
-    // 3. SURGICAL DMA EXTRACTION (Post-Render)
-    if (p->pick_x >= 0 && p->pick_y >= 0 && p->pick_x < (int32_t)p->width && p->pick_y < (int32_t)p->height) {
-        VkImageMemoryBarrier copyBarrier = {
-            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-            .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            .image = (VkImage)p->id_image,
-            .subresourceRange = (VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-            .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-            .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT
-        };
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &copyBarrier);
-
-        VkBufferImageCopy region = {0};
-        region.imageSubresource = (VkImageSubresourceLayers){VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        region.imageOffset = (VkOffset3D){p->pick_x, p->pick_y, 0};
-        region.imageExtent = (VkExtent3D){1, 1, 1};
-
-        // Command the GPU to slice out exactly 1 pixel and dump it into our CPU-mapped buffer
-        vkCmdCopyImageToBuffer(cmd, (VkImage)p->id_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, (VkBuffer)p->picking_buffer, 1, &region);
-    }
-    // === RESTORE THIS MISSING BLOCK ===
+    // 5. Present Barrier
     VkImageMemoryBarrier presentBarrier = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
         .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -651,6 +611,7 @@ EXPORT void vx_record_commands(VkCommandBuffer cmd, RenderPacket* p, DrawCommand
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, NULL, 0, NULL, 1, &presentBarrier);
     vkEndCommandBuffer(cmd);
 }
+
 THREAD_FUNC render_thread_loop(void* arg) {
     printf("[C-CORE] Async Render Thread Online.\n");
 

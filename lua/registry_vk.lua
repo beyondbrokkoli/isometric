@@ -125,13 +125,8 @@ local reg = {
                 { type = "uint64_t", name = "depth_image" },
                 { type = "uint64_t", name = "depth_view" },
                 { type = "uint32_t", name = "width" },
-                { type = "uint32_t", name = "height" },
-                -- [NEW ELEMENTS BELOW]
-                { type = "uint64_t", name = "id_image" },
-                { type = "uint64_t", name = "id_view" },
-                { type = "uint64_t", name = "picking_buffer" },
-                { type = "int32_t", name = "pick_x" },
-                { type = "int32_t", name = "pick_y" }
+                { type = "uint32_t", name = "height" }
+                -- Deleted: id_image, id_view, picking_buffer, pick_x, pick_y
             }
         },
         {

@@ -62,12 +62,7 @@ typedef struct __attribute__((packed, aligned(64))) {
     uint64_t depth_view;
     uint32_t width;
     uint32_t height;
-    uint64_t id_image;
-    uint64_t id_view;
-    uint64_t picking_buffer;
-    int32_t pick_x;
-    int32_t pick_y;
-    uint8_t _pad_tail[16];
+    uint8_t _pad_tail[48];
 } RenderPacket;
 
 typedef struct __attribute__((packed, aligned(4))) {
@@ -89,5 +84,5 @@ typedef struct __attribute__((packed, aligned(4))) {
             void* pfnSetPrimitiveTopology; void* pfnSetDepthTestEnable;
             void* pfnSetDepthWriteEnable; void* pfnSetDepthCompareOp;
         } RenderThreadInit;
-    
+
 #endif // VX_ENABLE_VULKAN_STRUCTS

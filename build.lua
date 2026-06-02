@@ -109,6 +109,7 @@ local function compile_engine(platform, build_target)
         print("\n[Packing Windows Dependencies (DLLs)...]")
         copy_file("C:/msys64/mingw64/bin/glfw3.dll", "bin/glfw3.dll")
         copy_file("C:/msys64/mingw64/bin/lua51.dll", "bin/lua51.dll")
+        copy_file("C:/msys64/mingw64/bin/libwinpthread-1.dll", "bin/libwinpthread-1.dll") -- Add this
         print("  |- DLLs copied successfully.")
     else
         print("ERROR: Unknown platform. Use 'linux' or 'win'.")
