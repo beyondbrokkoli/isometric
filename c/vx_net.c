@@ -5,6 +5,11 @@
 #include <string.h>
 #include <stdatomic.h>
 
+#include "shared_structs.h" // Brings in all the CFG_ and FRAME_STATE_ defines
+
+// Quick macro to turn the size into a bitmask (128 -> 127)
+#define NET_RING_MASK (CFG_ROLLBACK_BUFFER_SIZE - 1)
+
 #if defined(_WIN32)
     #define EXPORT __declspec(dllexport)
     #include <winsock2.h>
@@ -182,7 +187,7 @@ EXPORT void vx_net_send(const void* payload, size_t len) {
     if (g_net.sock == NET_INVALID || !payload) return;
     if (!g_net.is_connected) return;
 
-    sendto(g_net.sock, (const char*)payload, len, 0, 
+    sendto(g_net.sock, (const char*)payload, len, 0,
            (struct sockaddr*)&g_net.remote_addr, g_net.remote_addr_len);
 }
 
@@ -195,14 +200,10 @@ EXPORT int vx_net_poll(void* out_buffer, size_t expected_len) {
     ssize_t recvd = recvfrom(g_net.sock, (char*)out_buffer, expected_len, 0, (struct sockaddr*)&from, &from_len);
 
     if (recvd == expected_len) {
-        // ANTI-BOILERPLATE UDP LATCH:
-        // Overwrite the destination address with the sender's address.
-        // This allows the Host to effortlessly route replies to a LAN Client
-        // without knowing the Client's IP at boot.
-        g_net.remote_addr = from;
-        g_net.remote_addr_len = from_len;
+        // [ATTACK VECTOR: LATCH DESTROYED]
+        // We no longer overwrite g_net.remote_addr.
+        // We trust the explicit connection made at boot.
         g_net.is_connected = 1;
-
         return 1;
     }
 
@@ -218,10 +219,62 @@ EXPORT int vx_net_get_last_error(void) {
     return atomic_load_explicit(&g_net.last_error, memory_order_acquire);
 }
 
-/**
- * vx_net_shutdown(void)
- * Clean up socket resources. Call before exit.
- */
+// The SSoT Rollback Arena
+static RollbackBuffer g_rollback_arena = {0};
+
+EXPORT RollbackBuffer* vx_net_get_arena(void) {
+    return &g_rollback_arena;
+}
+
+// The core temporal pump. Lua calls this every fixed tick.
+EXPORT void vx_net_commit_frame(uint32_t tick, uint32_t local_wasd, int32_t local_click) {
+    uint32_t idx = tick & NET_RING_MASK;
+
+    // 1. Log local reality
+    g_rollback_arena.frames[idx].tick = tick;
+    g_rollback_arena.frames[idx].local_input = local_wasd;
+    g_rollback_arena.frames[idx].local_click = local_click; // [UPDATED]
+    g_rollback_arena.head_tick = tick;
+
+    // 2. Broadcast local reality over UDP
+    LockstepPacket out_pkt = { tick, local_wasd, local_click };
+    vx_net_send(&out_pkt, sizeof(LockstepPacket));
+
+    // 3. Drain incoming network packets and collapse the quantum state
+    LockstepPacket in_pkt;
+    while (vx_net_poll(&in_pkt, sizeof(LockstepPacket))) {
+        uint32_t r_idx = in_pkt.frame_tick & NET_RING_MASK;
+        RollbackFrame* r_frame = &g_rollback_arena.frames[r_idx];
+
+        // Temporal Fracture Check: Did they move OR click differently than we predicted?
+        if (r_frame->state == FRAME_STATE_PREDICTED && r_frame->tick == in_pkt.frame_tick) {
+            if (r_frame->remote_input != in_pkt.player_input || r_frame->remote_click != in_pkt.click_grid_idx) { // [UPDATED]
+                if (!g_rollback_arena.is_rollback_active || in_pkt.frame_tick < g_rollback_arena.rollback_target) {
+                    g_rollback_arena.is_rollback_active = 1;
+                    g_rollback_arena.rollback_target = in_pkt.frame_tick; 
+                }
+            }
+        }
+
+        // Overwrite with confirmed reality
+        r_frame->remote_input = in_pkt.player_input;
+        r_frame->remote_click = in_pkt.click_grid_idx; // [NEW] Save the network click!
+        r_frame->state = FRAME_STATE_CONFIRMED;
+
+        if (in_pkt.frame_tick > g_rollback_arena.confirmed_tick) {
+            g_rollback_arena.confirmed_tick = in_pkt.frame_tick;
+        }
+    }
+
+    // 4. Predict the missing remote input for the CURRENT tick if it hasn't arrived
+    if (g_rollback_arena.frames[idx].state != FRAME_STATE_CONFIRMED) {
+        uint32_t prev_idx = (tick - 1) & NET_RING_MASK;
+        g_rollback_arena.frames[idx].remote_input = g_rollback_arena.frames[prev_idx].remote_input;
+        g_rollback_arena.frames[idx].remote_click = -1; // [NEW] Safest prediction: they didn't click.
+        g_rollback_arena.frames[idx].state = FRAME_STATE_PREDICTED;
+    }
+}
+
 EXPORT void vx_net_shutdown(void) {
     if (g_net.sock != NET_INVALID) {
         NET_CLOSE(g_net.sock);

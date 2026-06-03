@@ -3,10 +3,14 @@ local ffi = require("ffi")
 ffi.cdef[[
     int vx_net_host(int port);
     int vx_net_connect(const char* ip, int port);
-    void vx_net_send(const void* payload, size_t len); // [FIXED] generic name and size_t
-    int vx_net_poll(void* out_buffer, size_t expected_len); // [FIXED] generic name and size_t
+    void vx_net_send(const void* payload, size_t len);
+    int vx_net_poll(void* out_buffer, size_t expected_len);
     int vx_net_get_last_error(void);
     void vx_net_shutdown(void);
+
+    // [NEW] Rollback Interfaces
+    RollbackBuffer* vx_net_get_arena(void);
+    void vx_net_commit_frame(uint32_t tick, uint32_t local_wasd, int32_t local_click);
 ]]
 
 local net_lib
@@ -39,6 +43,14 @@ end
 -- [FIXED] Pass the expected length down to the C-Core
 function Network.Poll(cmd_ptr, expected_len)
     return net_lib.vx_net_poll(cmd_ptr, expected_len) == 1
+end
+
+function Network.GetArena()
+    return net_lib.vx_net_get_arena()
+end
+
+function Network.CommitFrame(tick, wasd, click)
+    net_lib.vx_net_commit_frame(tick, wasd, click)
 end
 
 function Network.Shutdown()

@@ -1,33 +1,84 @@
-WITH local ny = -((mouse_y / screen_h) * 2.0 - 1.0)
-this was incorrect because the resulting behaviour is even more off
---- SCREEN TO GRID UNPROJECTION ---
-Mouse : X: 666.0, Y: 333.0
-NDC   : NX: 0.041, NY: 0.075
-Origin: X: 102.3, Y: -306.2, Z: -408.4
-Vector: X: 0.577, Y: -0.577, Z: 0.577
-Hit(0): X: -203.9, Z: -714.6
-Grid  : Cell(133, 107) -> IDX: 27525 | Ray Height: -306.2
+AzureAD+HalimOmarZaghdoudi@DESKTOP-BD3FFTI MINGW64 ~/rts
+$ ./bin/boot.exe
+[C-CORE] Booting Headless Worker...
+[LUA-OS-THREAD] Booting Lua VM...
+ WEAVER NETWORK INITIALIZATION
+Press [ENTER] to boot as HOST.
+Type any key then [ENTER] to boot as CLIENT.
+>
+[NET] UDP socket bound to port 27015 (fd=792)
+[NET] Remote target set: 127.0.0.1:27016
+[NET] Socket Online. Role: HOST | Port: 27015 -> Target: 127.0.0.1:27016
 
+[LUA IO] Booting Headless Weaver (LABORATORY)...
+[WEAVER] Executing Stage 1: Vulkan Instance
+[LUA] Initializing Vulkan Core (Instance Generation)...
+[LUA] Validation Layers DISABLED. Running raw.
+[WEAVER] Executing Stage 2: GLFW Window Boot
+[WEAVER] Ordering C-Core to Boot GLFW Window...
+[WEAVER] Yielding execution, waiting for C-Core Surface...
+[C-CORE] Window & Surface Created on Lua's Demand!
+[WEAVER] Executing Stage 3: Vulkan Logical Device
+[LUA] Resuming Vulkan Setup. Finalizing Logical Device...
+[LUA] No dedicated Transfer queue found. Sharing Graphics queue.
+[LUA] Logical Device Created!
+[WEAVER] Executing Stage 4: Memory Arenas Allocation
+[MEMORY] Timeline Semaphore forged for Async Transfers.
+[MEMORY] ReBAR Supported! Streaming directly to VRAM.
+[MEMORY] Allocated & Mapped VRAM Buffer: MASTER_INDEX_BLOCK (0.00 MB)
+[MEMORY] ReBAR Supported! Streaming directly to VRAM.
+[MEMORY] Allocated & Mapped VRAM Buffer: MASTER_GPU_BLOCK (12.00 MB)
+[MEMORY] ReBAR Supported! Streaming directly to VRAM.
+[MEMORY] Allocated & Mapped VRAM Buffer: PALETTE_STAGING (0.02 MB)
+[MEMORY] Forged GPU Buffer Haven: PALETTE_HAVEN (0.02 MB)
+[WEAVER] Executing Stage 5: Swapchain Initialization
+[SWAPCHAIN] Building the display chain...
+[SWAPCHAIN] Created successfully with 3 images!
+[WEAVER] Executing Stage 6: Descriptors Matrix
+[DESCRIPTORS] Wiring Master VRAM Arena & Palette Haven...
+[DESCRIPTORS] Unified Memory Matrix successfully bound!
+[WEAVER] Executing Stage 7: Compute Graph Pipelines
+[COMPUTE] Forging 0-Pass Compute Shaders...
+[WEAVER] Executing Stage 8: Graphics Pipelines & Depth Buffer
+[GRAPHICS] Building Reverse-Z Depth Buffer and Shader Modules...
+[WEAVER] Executing Stage 9: Renderer Synchronization
+[RENDERER] Forging Synchronization Primitives...
+[WEAVER] Executing Stage 10: Async Overlord Handoff
+[WEAVER] Packing C-Core Mailbox and firing Render Thread...
+[WEAVER] Engine Initialization Complete. Async Overlord is LIVE.
+[LUA IO] Weaver sequence complete! Unpacking Context...
+[LUA CO] Forging Data-Driven Pizza World Tilemap...
+[C-CORE] Async Render Thread Online.
+[C-CORE] Async Transfer Overlord Online.
+[MEMORY] Allocated Fast CPU RAM: terrain_id (0.12 MB)
+[MEMORY] Allocated Fast CPU RAM: elevation (0.12 MB)
+[MEMORY] Allocated Fast CPU RAM: entity_id (0.12 MB)
+[LUA CO] Initializing VRAM Index Buffer with Strict Topology...
+[LUA CO] Packing Data-Driven Color Palette...
+[TRANSFER] Job dispatched: PALETTE_STAGING -> PALETTE_HAVEN (Target Timeline: 1)
+[LUA CO] Entering Deterministic Rollback Render Loop...
+[C-CORE] Submitting DMA Transfer. Timeline Signal Value: 1
+[LUA CO] Priming the UDP Temporal Pump...
+[LUA CO] Async Transfer Complete! Palette Haven Online.
 
+[C-CORE] Shutdown triggered. Waiting for Lua VM...
+[C-CORE] Async Transfer Thread gracefully terminated.
 
-and with original setup ...
-WITH local ny = (mouse_y / screen_h) * 2.0 - 1.0
-
-the first try seems semi accurate in the center area of the screen
---- SCREEN TO GRID UNPROJECTION ---
-Mouse : X: 562.0, Y: 316.0
-NDC   : NX: -0.122, NY: -0.122
-Origin: X: -20.8, Y: 20.1, Z: 40.8
-Vector: X: 0.577, Y: -0.577, Z: 0.577
-Hit(0): X: -0.7, Z: 60.9
-Grid  : Cell(128, 131) -> IDX: 33664 | Ray Height: -0.7
-
-
-the second one is off, im clicking at the bottom but the tiles trigger far higher on scren
---- SCREEN TO GRID UNPROJECTION ---
-Mouse : X: 562.0, Y: 669.0
-NDC   : NX: -0.122, NY: 0.858
-Origin: X: -101.3, Y: -140.9, Z: -39.7
-Vector: X: 0.577, Y: -0.577, Z: 0.577
-Hit(0): X: -242.2, Z: -180.6
-Grid  : Cell(122, 126) -> IDX: 32378 | Ray Height: -140.9
+[LUA IO] Render Loop Terminated. Commencing Teardown...
+[TEARDOWN] Terminating Async Render Thread and Worker Pool...
+[C-CORE] Async Render Thread gracefully terminated and pool destroyed.
+[C-CORE] Async Threads joined, Device idled, and Pools destroyed.
+[TEARDOWN] Destroying Graphics Pipelines, Depth Buffer & ID Buffer...
+[TEARDOWN] Dismantling Compute Graph Pipelines...
+[TEARDOWN] Deconstructing Descriptors...
+[TEARDOWN] Destroying Swapchain & Image Views...
+[TEARDOWN] Dismantling Renderer Sync Objects...
+[TEARDOWN] Freeing VRAM and CPU Memory Arenas...
+[NET] Socket shutdown complete.
+[TEARDOWN] Timeline Semaphore destroyed.
+[TEARDOWN] Shutting down Vulkan Core...
+[LUA IO] Teardown Complete. Safe Exit.
+[LUA-OS-THREAD] VM Destroyed.
+[C-CORE] Clean Exit.
+23
+AzureAD+HalimOmarZaghdoudi@DESKTOP-BD3FFTI MINGW64 ~/rts

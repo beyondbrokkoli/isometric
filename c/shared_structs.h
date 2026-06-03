@@ -2,6 +2,28 @@
 #pragma once
 #include <stdint.h>
 
+// --- ENGINE CONSTANTS ---
+#define MODE_DUAL 0
+#define MODE_GEOM 1
+#define MODE_POINT_CLOUD_PASS 88
+#define MODE_POINTS 2
+#define CFG_FRAME_SLOTS 10
+#define CFG_GRID_CELLS 262144
+#define CFG_PC_SIZE 96
+#define CFG_PCOUNT 1000000
+#define CFG_ROLLBACK_BUFFER_SIZE 128
+#define CFG_SWAP_SLOTS 10
+#define CFG_SWARM_STATES 7
+#define CFG_USE_VALIDATION 0
+#define CFG_VK_API_VERSION 4206592
+#define FRAME_STATE_CONFIRMED 2
+#define FRAME_STATE_EMPTY 0
+#define FRAME_STATE_PREDICTED 1
+#define WORLD_MAP_HEIGHT 256
+#define WORLD_MAP_WIDTH 256
+#define WORLD_OFFSET_X 2560
+#define WORLD_OFFSET_Z 2560
+#define WORLD_SPACING 20
 typedef struct __attribute__((packed)) {
     float m[16];
 } mat4_t;
@@ -15,13 +37,13 @@ typedef struct __attribute__((packed)) {
 
 typedef struct __attribute__((packed)) {
     mat4_t viewProj;
-    uint32_t soa_upload_idx;
     uint32_t aos_current_idx;
     uint32_t aos_prev_idx;
-    uint32_t particle_count;
     float dt;
     float total_time;
     uint32_t target_state;
+    uint32_t hover_idx;
+    uint32_t flags;
     uint8_t _pad_tail[4];
 } PushConstants;
 
@@ -71,8 +93,25 @@ typedef struct __attribute__((packed, aligned(4))) {
     int32_t click_grid_idx;
 } LockstepPacket;
 
+typedef struct __attribute__((packed, aligned(4))) {
+    uint32_t tick;
+    uint32_t local_input;
+    uint32_t remote_input;
+    int32_t local_click;
+    int32_t remote_click;
+    uint8_t state;
+    uint8_t _pad_tail[3];
+} RollbackFrame;
 
-// --- VULKAN HOST INTERFACES ---
+typedef struct __attribute__((packed, aligned(64))) {
+    RollbackFrame frames[128];
+    uint32_t head_tick;
+    uint32_t confirmed_tick;
+    uint32_t rollback_target;
+    uint32_t is_rollback_active;
+    uint8_t _pad_tail[48];
+} RollbackBuffer;
+
 #ifdef VX_ENABLE_VULKAN_STRUCTS
         typedef struct {
             VkDevice device; VkQueue queue; VkQueue transfer_queue; VkSwapchainKHR swapchain;
@@ -84,5 +123,5 @@ typedef struct __attribute__((packed, aligned(4))) {
             void* pfnSetPrimitiveTopology; void* pfnSetDepthTestEnable;
             void* pfnSetDepthWriteEnable; void* pfnSetDepthCompareOp;
         } RenderThreadInit;
-
+    
 #endif // VX_ENABLE_VULKAN_STRUCTS
