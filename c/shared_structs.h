@@ -91,6 +91,8 @@ typedef struct __attribute__((packed, aligned(4))) {
     uint32_t frame_tick;
     uint32_t player_input;
     int32_t click_grid_idx;
+    uint32_t past_inputs[7];
+    int32_t past_clicks[7];
 } LockstepPacket;
 
 typedef struct __attribute__((packed, aligned(4))) {

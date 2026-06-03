@@ -93,7 +93,9 @@ M.specs = {
         members = {
             { type = "uint32_t", name = "frame_tick" },
             { type = "uint32_t", name = "player_input" },
-            { type = "int32_t", name = "click_grid_idx" }
+            { type = "int32_t", name = "click_grid_idx" },
+            { type = "uint32_t", name = "past_inputs", count = 7 }, -- [NEW] Redundant WASD
+            { type = "int32_t", name = "past_clicks", count = 7 }    -- [NEW] Redundant Clicks
         }
     },
     -- [NEW] Rollback Network Engine Core Containment Types

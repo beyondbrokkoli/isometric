@@ -197,17 +197,33 @@ EXPORT int vx_net_poll(void* out_buffer, size_t expected_len) {
 
     struct sockaddr_in from;
     socklen_t from_len = sizeof(from);
-    ssize_t recvd = recvfrom(g_net.sock, (char*)out_buffer, expected_len, 0, (struct sockaddr*)&from, &from_len);
 
-    if (recvd == expected_len) {
-        // [ATTACK VECTOR: LATCH DESTROYED]
-        // We no longer overwrite g_net.remote_addr.
-        // We trust the explicit connection made at boot.
-        g_net.is_connected = 1;
-        return 1;
+    // [THE FIX] Internal loop to chew through queued network errors (WSAECONNRESET)
+    // and garbage packets without breaking the external timeline draining loop.
+    while (1) {
+        ssize_t recvd = recvfrom(g_net.sock, (char*)out_buffer, expected_len, 0, (struct sockaddr*)&from, &from_len);
+
+        if (recvd == expected_len) {
+            g_net.is_connected = 1;
+            return 1; // Got a valid packet, send it to the rollback arena
+        }
+
+        if (recvd < 0) {
+            int err = NET_LASTERR;
+
+            // If the socket is genuinely empty, NOW we can safely break out.
+            if (err == NET_WOULDBLOCK) {
+                return 0;
+            }
+
+            // Otherwise, it's a non-fatal anomaly (like a queued ICMP unreachable).
+            // Continue the loop to instantly eat the error and grab the next packet.
+            continue;
+        }
+
+        // If recvd > 0 but != expected_len, it's a corrupted/wrong-size packet.
+        // Ignore it and continue reading.
     }
-
-    return 0;
 }
 
 /**
@@ -226,39 +242,85 @@ EXPORT RollbackBuffer* vx_net_get_arena(void) {
     return &g_rollback_arena;
 }
 
-// The core temporal pump. Lua calls this every fixed tick.
 EXPORT void vx_net_commit_frame(uint32_t tick, uint32_t local_wasd, int32_t local_click) {
     uint32_t idx = tick & NET_RING_MASK;
 
-    // 1. Log local reality
+    // 1. Purge ancient slots
+    if (g_rollback_arena.frames[idx].tick != tick) {
+        g_rollback_arena.frames[idx].state = FRAME_STATE_EMPTY; // <-- THE FIX
+        g_rollback_arena.frames[idx].remote_input = 0;
+        g_rollback_arena.frames[idx].remote_click = -1;
+    }
+
     g_rollback_arena.frames[idx].tick = tick;
     g_rollback_arena.frames[idx].local_input = local_wasd;
-    g_rollback_arena.frames[idx].local_click = local_click; // [UPDATED]
+    g_rollback_arena.frames[idx].local_click = local_click;
     g_rollback_arena.head_tick = tick;
 
-    // 2. Broadcast local reality over UDP
-    LockstepPacket out_pkt = { tick, local_wasd, local_click };
+    // 2. Broadcast local reality over UDP (With Redundant History)
+    LockstepPacket out_pkt;
+    out_pkt.frame_tick = tick;
+    out_pkt.player_input = local_wasd;
+    out_pkt.click_grid_idx = local_click;
+
+    for (int i = 1; i <= 7; i++) {
+        uint32_t p_tick = tick - i;
+        out_pkt.past_inputs[i-1] = g_rollback_arena.frames[p_tick & NET_RING_MASK].local_input;
+        out_pkt.past_clicks[i-1] = g_rollback_arena.frames[p_tick & NET_RING_MASK].local_click;
+    }
+
     vx_net_send(&out_pkt, sizeof(LockstepPacket));
 
-    // 3. Drain incoming network packets and collapse the quantum state
+    // 3. Process Incoming Network Reality
     LockstepPacket in_pkt;
     while (vx_net_poll(&in_pkt, sizeof(LockstepPacket))) {
+
+        // 🚨 REDUNDANT HISTORY RECOVERY (Process oldest to newest)
+        for (int i = 7; i >= 1; i--) {
+            uint32_t h_tick = in_pkt.frame_tick - i;
+            uint32_t h_idx = h_tick & NET_RING_MASK;
+            RollbackFrame* h_frame = &g_rollback_arena.frames[h_idx];
+
+            // If this past frame is still sitting in a predicted state, recover its true reality!
+            if (h_frame->state == FRAME_STATE_PREDICTED && h_frame->tick == h_tick) {
+                uint32_t h_input = in_pkt.past_inputs[i-1];
+                int32_t h_click = in_pkt.past_clicks[i-1];
+
+                if (h_frame->remote_input != h_input || h_frame->remote_click != h_click) {
+                    if (!g_rollback_arena.is_rollback_active || h_tick < g_rollback_arena.rollback_target) {
+                        g_rollback_arena.is_rollback_active = 1;
+                        g_rollback_arena.rollback_target = h_tick;
+                    }
+                }
+                h_frame->remote_input = h_input;
+                h_frame->remote_click = h_click;
+                h_frame->state = FRAME_STATE_CONFIRMED;
+            }
+        }
         uint32_t r_idx = in_pkt.frame_tick & NET_RING_MASK;
         RollbackFrame* r_frame = &g_rollback_arena.frames[r_idx];
 
-        // Temporal Fracture Check: Did they move OR click differently than we predicted?
+        // 🚨 THE GHOST SHIELD: Exorcise ancient delayed packets
+        if ((int32_t)(in_pkt.frame_tick - r_frame->tick) < 0 && r_frame->tick != 0) {
+            printf("[NET] 🚨 EXORCISM: Dropped ancient packet %u! Slot already claimed by %u.\n",
+                   in_pkt.frame_tick, r_frame->tick);
+            continue;
+        }
+
+        // Temporal Fracture Check
         if (r_frame->state == FRAME_STATE_PREDICTED && r_frame->tick == in_pkt.frame_tick) {
-            if (r_frame->remote_input != in_pkt.player_input || r_frame->remote_click != in_pkt.click_grid_idx) { // [UPDATED]
+            if (r_frame->remote_input != in_pkt.player_input || r_frame->remote_click != in_pkt.click_grid_idx) {
                 if (!g_rollback_arena.is_rollback_active || in_pkt.frame_tick < g_rollback_arena.rollback_target) {
                     g_rollback_arena.is_rollback_active = 1;
-                    g_rollback_arena.rollback_target = in_pkt.frame_tick; 
+                    g_rollback_arena.rollback_target = in_pkt.frame_tick;
                 }
             }
         }
 
         // Overwrite with confirmed reality
+        r_frame->tick = in_pkt.frame_tick;
         r_frame->remote_input = in_pkt.player_input;
-        r_frame->remote_click = in_pkt.click_grid_idx; // [NEW] Save the network click!
+        r_frame->remote_click = in_pkt.click_grid_idx;
         r_frame->state = FRAME_STATE_CONFIRMED;
 
         if (in_pkt.frame_tick > g_rollback_arena.confirmed_tick) {
@@ -266,11 +328,11 @@ EXPORT void vx_net_commit_frame(uint32_t tick, uint32_t local_wasd, int32_t loca
         }
     }
 
-    // 4. Predict the missing remote input for the CURRENT tick if it hasn't arrived
+    // 4. Predict the future if we didn't get a confirmation
     if (g_rollback_arena.frames[idx].state != FRAME_STATE_CONFIRMED) {
         uint32_t prev_idx = (tick - 1) & NET_RING_MASK;
         g_rollback_arena.frames[idx].remote_input = g_rollback_arena.frames[prev_idx].remote_input;
-        g_rollback_arena.frames[idx].remote_click = -1; // [NEW] Safest prediction: they didn't click.
+        g_rollback_arena.frames[idx].remote_click = -1;
         g_rollback_arena.frames[idx].state = FRAME_STATE_PREDICTED;
     }
 }

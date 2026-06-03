@@ -254,13 +254,13 @@ local function main()
     pc.aos_current_idx, pc.aos_prev_idx = 0, 0
     pc.dt = 0.0
 
-    local proj, view = ffi.new("mat4_t"), ffi.new("mat4_t")
-    local inv_vp = ffi.new("mat4_t") -- ADD THIS HERE
+    -- [ATTACK VECTOR 3] INITIALIZE GENERALIZED CAMERA
+    local camera_mod = require("camera")
+    local cam = camera_mod.new()
+    local inv_vp = ffi.new("mat4_t")
 
-    local ortho_zoom = 250.0
-    local cam_yaw, cam_pitch = 0.785398, 0.615472
-    local cam_pos = {x = 0.0, y = 0.0, z = 0.0}
-    local move_speed = 200.0
+    -- DELETED: local proj, view
+    -- DELETED: local ortho_zoom, cam_yaw, cam_pitch, cam_pos, move_speed
 
     local total_time = 0.0
     local wants_hotswap = false
@@ -305,39 +305,13 @@ local function main()
         elevation = ffi.new("uint16_t[128][" .. total_tiles .. "]")
     }
 
-    local local_avatar = { x = is_host and 64 or 192, z = is_host and 64 or 192, id = 1 }
-    local remote_avatar = { x = is_host and 192 or 64, z = is_host and 192 or 64, id = 2 }
-
-    local function apply_locomotion(grid, avatar, input_mask, tick_count)
-        if tick_count % 6 ~= 0 then return end
-        if input_mask == 0 then return end
-
-        local old_idx = avatar.z * cfg.world.map_width + avatar.x
-        grid.terrain[old_idx] = 0
-        grid.elevation[old_idx] = 0.0
-
-        if bit.band(input_mask, 1) ~= 0 then avatar.z = avatar.z - 1 end
-        if bit.band(input_mask, 2) ~= 0 then avatar.z = avatar.z + 1 end
-        if bit.band(input_mask, 4) ~= 0 then avatar.x = avatar.x - 1 end
-        if bit.band(input_mask, 8) ~= 0 then avatar.x = avatar.x + 1 end
-
-        avatar.x = math.max(0, math.min(cfg.world.map_width - 1, avatar.x))
-        avatar.z = math.max(0, math.min(cfg.world.map_height - 1, avatar.z))
-
-        local new_idx = avatar.z * cfg.world.map_width + avatar.x
-        grid.terrain[new_idx] = avatar.id
-        grid.elevation[new_idx] = 4.0
-    end
-
     local function update_simulation(grid, tick, frame_data)
-        apply_locomotion(grid, local_avatar, frame_data.local_input, tick)
-        apply_locomotion(grid, remote_avatar, frame_data.remote_input, tick)
-
         -- Evaluate Local Click
         if frame_data.local_click ~= -1 then
+            print(string.format("[LUA] Tick %d | Local Toggle -> %d", tick, frame_data.local_click))
             local c_idx = frame_data.local_click
             if grid.terrain[c_idx] == 0 then
-                grid.terrain[c_idx] = local_avatar.id
+                grid.terrain[c_idx] = 1 -- ID 1 for Host/Local
                 grid.elevation[c_idx] = 15.0 -- [FIXED] Visible Elevation
             else
                 grid.terrain[c_idx] = 0
@@ -347,9 +321,10 @@ local function main()
 
         -- Evaluate Remote Click
         if frame_data.remote_click ~= -1 then
+            print(string.format("[LUA] Tick %d | Remote Toggle -> %d", tick, frame_data.remote_click))
             local c_idx = frame_data.remote_click
             if grid.terrain[c_idx] == 0 then
-                grid.terrain[c_idx] = remote_avatar.id
+                grid.terrain[c_idx] = 2 -- ID 2 for Client/Remote
                 grid.elevation[c_idx] = 15.0 -- [FIXED] Visible Elevation
             else
                 grid.terrain[c_idx] = 0
@@ -457,11 +432,11 @@ local function main()
             -- [NEW] THE TIME HEALER: Eliminate Asymmetric Lag
             if network_locked then
                 local remote_highest = rollback_arena.confirmed_tick
-                if remote_highest > sim_tick_count then
-                    -- We are in the past! Force the accumulator to swallow the time gap 
-                    -- so the while-loop below violently fast-forwards us to the present.
+                if remote_highest > sim_tick_count + 2 then
+                    -- We are in the past! Force the accumulator to swallow the time gap
                     accumulator = accumulator + ((remote_highest - sim_tick_count) * FIXED_DT)
                 end
+                -- ❌ DELETE THE `elseif sim_tick_count > remote_highest + 4` BLOCK FROM HERE
             end
 
             local mouse_left = ffi.C.vx_input_mouse_btn(0)
@@ -484,9 +459,10 @@ local function main()
             while accumulator >= FIXED_DT do
                 local current_local_input = ffi.C.vx_input_wasd()
                 local local_click = pending_click
-                pending_click = -1
 
                 if not network_locked then
+                    pending_click = -1 -- Consume click during handshake
+
                     -- Spam Tick 0 to wake up the other instance
                     net.CommitFrame(0, 0, -1)
 
@@ -499,39 +475,57 @@ local function main()
                         accumulator = 0.0
                     end
                 else
-                    -- LIVE GAME STATE: The Timeline is anchored
-                    net.CommitFrame(sim_tick_count, current_local_input, local_click)
+                    -- ✅ THE NEW TEMPORAL TETHER
+                    local remote_highest = rollback_arena.confirmed_tick
 
-                    if rollback_arena.is_rollback_active == 1 then
-                        local t_target = rollback_arena.rollback_target
-                        print("[ROLLBACK] Quantum Fracture! Rewinding from " .. sim_tick_count .. " to " .. t_target)
+                    if sim_tick_count > remote_highest + 4 then
+                        -- STALL MODE: We are in the future!
+                        -- Pump the network to receive packets, but DO NOT advance the simulation.
+                        net.CommitFrame(sim_tick_count, current_local_input, local_click)
 
-                        local rewind_idx = bit.band(t_target, 127)
-                        ffi.copy(rts_grid.terrain, snapshot_ring.terrain[rewind_idx], bytes_per_layer)
-                        ffi.copy(rts_grid.elevation, snapshot_ring.elevation[rewind_idx], bytes_per_layer)
+                        -- Note: We intentionally do NOT reset pending_click to -1 here.
+                        -- If you clicked while stalled, we hold onto it until the simulation unfreezes.
+                    else
+                        -- LIVE GAME STATE: We are within the safe window.
+                        pending_click = -1 -- Consume the click
+                        net.CommitFrame(sim_tick_count, current_local_input, local_click)
 
-                        for t = t_target, sim_tick_count do
-                            local ff_idx = bit.band(t, 127)
-                            local frame = rollback_arena.frames[ff_idx]
-                            update_simulation(rts_grid, t, frame)
+                        if rollback_arena.is_rollback_active == 1 then
+                            local t_target = rollback_arena.rollback_target
+                            print("[ROLLBACK] Quantum Fracture! Rewinding from " .. sim_tick_count .. " to " .. t_target)
 
-                            ffi.copy(snapshot_ring.terrain[ff_idx], rts_grid.terrain, bytes_per_layer)
-                            ffi.copy(snapshot_ring.elevation[ff_idx], rts_grid.elevation, bytes_per_layer)
+                            local rewind_idx = bit.band(t_target, 127)
+                            ffi.copy(rts_grid.terrain, snapshot_ring.terrain[rewind_idx], bytes_per_layer)
+                            ffi.copy(rts_grid.elevation, snapshot_ring.elevation[rewind_idx], bytes_per_layer)
+
+                            for t = t_target, sim_tick_count do
+                                local ff_idx = bit.band(t, 127)
+                                local frame = rollback_arena.frames[ff_idx]
+
+                                -- 1. ALWAYS save the snapshot BEFORE simulating the frame
+                                ffi.copy(snapshot_ring.terrain[ff_idx], rts_grid.terrain, bytes_per_layer)
+                                ffi.copy(snapshot_ring.elevation[ff_idx], rts_grid.elevation, bytes_per_layer)
+
+                                -- 2. Simulate the frame
+                                update_simulation(rts_grid, t, frame)
+                            end
+
+                            rollback_arena.is_rollback_active = 0
+                        else
+                            local current_idx = bit.band(sim_tick_count, 127)
+                            ffi.copy(snapshot_ring.terrain[current_idx], rts_grid.terrain, bytes_per_layer)
+                            ffi.copy(snapshot_ring.elevation[current_idx], rts_grid.elevation, bytes_per_layer)
+
+                            local frame = rollback_arena.frames[current_idx]
+                            update_simulation(rts_grid, sim_tick_count, frame)
                         end
 
-                        rollback_arena.is_rollback_active = 0 
-                    else
-                        local current_idx = bit.band(sim_tick_count, 127)
-                        ffi.copy(snapshot_ring.terrain[current_idx], rts_grid.terrain, bytes_per_layer)
-                        ffi.copy(snapshot_ring.elevation[current_idx], rts_grid.elevation, bytes_per_layer)
-
-                        local frame = rollback_arena.frames[current_idx]
-                        update_simulation(rts_grid, sim_tick_count, frame)
+                        -- Only advance the simulation tick if we were NOT stalled
+                        sim_tick_count = sim_tick_count + 1
                     end
-
-                    sim_tick_count = sim_tick_count + 1
                 end
 
+                -- We always consume the accumulator so the game loop doesn't freeze
                 accumulator = accumulator - FIXED_DT
             end
 
@@ -543,57 +537,14 @@ local function main()
             elseif last_key == cfg.key.num3 then active_render_mode = cfg.mode.points
             end
 
-            local EDGE_THRESHOLD = 40.0
-            local pan_x, pan_z = 0.0, 0.0
-            local is_captured = ffi.C.vx_input_is_captured() == 1
-
-            if is_captured then
-                if mouse_x < EDGE_THRESHOLD then pan_x = -1.0
-                elseif mouse_x > sc.extent.width - EDGE_THRESHOLD then pan_x = 1.0 end
-
-                if mouse_y < EDGE_THRESHOLD then pan_z = -1.0
-                elseif mouse_y > sc.extent.height - EDGE_THRESHOLD then pan_z = 1.0 end
-            end
-
-            local fwd_x = math.sin(cam_yaw)
-            local fwd_z = math.cos(cam_yaw)
-            local right_x = math.cos(cam_yaw)
-            local right_z = -math.sin(cam_yaw)
-
-            local frame_speed = move_speed * frame_time
-            cam_pos.x = cam_pos.x + (right_x * pan_x + fwd_x * -pan_z) * frame_speed
-            cam_pos.z = cam_pos.z + (right_z * pan_x + fwd_z * -pan_z) * frame_speed
-
-            local wasd = ffi.C.vx_input_wasd()
-            local zoom_dir = 0
-            if bit.band(wasd, 16) ~= 0 then zoom_dir = -1 end
-            if bit.band(wasd, 32) ~= 0 then zoom_dir = 1 end
-
-            if zoom_dir ~= 0 then
-                ortho_zoom = ortho_zoom * math.exp(zoom_dir * frame_time * 3.0)
-                ortho_zoom = math.max(200.0, math.min(25000.0, ortho_zoom))
-            end
-
             total_time = total_time + frame_time
             pc.total_time = total_time
 
-            local aspect = sc.extent.width / math.max(1, sc.extent.height)
-            vmath.ortho_vk(-ortho_zoom * aspect, ortho_zoom * aspect, -ortho_zoom, ortho_zoom, -10000.0, 10000.0, proj)
-
-            local look_x = math.sin(cam_yaw) * math.cos(cam_pitch)
-            local look_y = -math.sin(cam_pitch)
-            local look_z = math.cos(cam_yaw) * math.cos(cam_pitch)
-
-            vmath.lookAt(cam_pos.x, cam_pos.y, cam_pos.z, cam_pos.x + look_x, cam_pos.y + look_y, cam_pos.z + look_z, view)
-
-            -- Multiply your View and Projection for Vulkan
-            vmath.multiply_mat4(proj, view, pc.viewProj)
-
-            -- ADD THIS LINE: Invert it for the CPU raycaster to use on the next frame
-            vmath.inverse_mat4(pc.viewProj, inv_vp)
+            -- [ATTACK VECTOR 3] COMPACT CAM AND PROJECTION COUPLING
+            camera_mod.update(cam, frame_time, mouse_x, mouse_y, sc.extent.width, sc.extent.height)
+            camera_mod.get_matrices(cam, sc.extent.width, sc.extent.height, pc.viewProj, inv_vp)
 
             local write_idx = ffi.C.vx_stream_acquire()
-
             if write_idx ~= -1 then
                 local alpha = accumulator / FIXED_DT
                 pc.dt = alpha
