@@ -1,6 +1,7 @@
 package.path = "./lua/?.lua;" .. package.path
 local ffi = require("ffi")
 local json_util = require("json_util")
+
 -- 1. BOOTSTRAP SSOT MEMORY LAYOUTS FIRST
 -- This registers RenderPacket, PushConstants, and RollbackBuffer into the FFI
 -- so that the C-function declarations below don't crash on unknown types.
@@ -164,136 +165,32 @@ local function http_get(url)
     return res
 end
 
--- Robust, Language-Agnostic Local IP Discovery
-local function get_local_ip()
-    local cmd = ""
-    if jit.os == "Windows" then
-        -- Grab the first active IPv4 address that is not loopback or a wild card
-        cmd = 'powershell -Command "(Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike \'127.*\' -and $_.IPAddress -notlike \'169.254.*\' } | Select-Object -First 1).IPAddress"'
-    else
-        -- Linux standard route discovery
-        cmd = "ip route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i==\"src\") print $(i+1)}'"
-    end
-
-    local f = io.popen(cmd)
-    if not f then return "127.0.0.1" end
-
-    local res = f:read("*a")
-    f:close()
-
-    -- Strip whitespaces, newlines, and carriage returns
-    res = res:gsub("%s+", "")
-
-    -- Validation fallback: If it's not a clean IPv4, default to loopback
-    if not res:match("^%d+%.%d+%.%d+%.%d+$") then
-        return "127.0.0.1"
-    end
-
-    return res
-end
-
 local function main()
-    local VPS_IP = "138.199.152.240" -- Hetzner VPS
-    local MATCHMAKER_URL = "http://" .. VPS_IP .. ":8080"
-
     print("========================================")
-    print(" WEAVER ENGINE: HYBRID WAN/LAN PLAY     ")
+    print(" WEAVER ENGINE: LOCALHOST GROUND TRUTH  ")
     print("========================================")
-    print("1. Host Public Lobby")
-    print("2. Join Public Lobby")
+    print("1. Boot Local Host (Port 27015 -> Target 27016)")
+    print("2. Boot Local Guest (Port 27016 -> Target 27015)")
     io.write("> ")
     local user_input = io.read("*l")
 
     local net = require("network")
+    
+    local is_host = (user_input == "1")
+    local my_port = is_host and 27015 or 27016
+    local target_ip = "127.0.0.1"
+    local target_port = is_host and 27016 or 27015
 
-    -- 1. Bind to a random local ephemeral port to avoid conflicts
-    math.randomseed(os.time())
-    local local_port = math.random(49152, 65535)
-    assert(net.Host(local_port), "FATAL: Failed to bind local network port!")
+    print(string.format("[NET] Binding to local port %d...", my_port))
+    assert(net.Host(my_port), "FATAL: Failed to bind local network port!")
+    
+    print(string.format("[NET] Crosshairs locked onto %s:%d", target_ip, target_port))
+    assert(net.Connect(target_ip, target_port), "FATAL: Failed to set remote target!")
 
-    -- 2. Pre-Flight: Execute STUN & Local IP Discovery
-    print("[STUN] Querying Coturn for NAT translation...")
-    -- (Ensure Network.StunPunch is restored in network.lua and vx_net.c)
-    local pub_ip, pub_port = net.StunPunch(VPS_IP, 3478)
-    assert(pub_ip, "FATAL: STUN Hole Punch failed! Check router or firewall.")
-
-    local my_local_ip = get_local_ip()
-    print(string.format("[NETWORK] Local LAN: %s:%d | WAN: %s:%d", my_local_ip, local_port, pub_ip, pub_port))
-
-    local target_ip, target_port
-    -- [UPDATED] Payload now includes local_port to match your new Python server!
-    local payload = string.format('{"public_ip":"%s","public_port":%d,"local_ip":"%s","local_port":%d}',
-                                  pub_ip, pub_port, my_local_ip, local_port)
-
-    -- 3. Execute Matchmaking Handshake
-    if user_input == "1" then
-        local res = http_post(MATCHMAKER_URL .. "/host", payload)
-        local data = json_util.decode(res)
-        local lobby_id = data.lobby_id
-        assert(lobby_id, "FATAL: Server response did not contain a 'lobby_id'!")
-
-        print(string.format("[LOBBY] Session Hosted! Invite Code: [%s]", lobby_id))
-        print("[LOBBY] Booting engine immediately. Map will render while waiting for Guest...")
-
-        -- The Keep-Alive Blind Pivot
-        target_ip = VPS_IP
-        target_port = 3478
-
-        -- Background Polling Coroutine (DO NOT trap the main thread with a while loop here!)
-        local host_poll_co = coroutine.create(function()
-            while true do
-                local s_res = http_get(MATCHMAKER_URL .. "/status/" .. lobby_id)
-                local success, s_data = pcall(json_util.decode, s_res)
-
-                if success and s_data.status == "ready" then
-                    local guest_pub_ip = s_data.opponent_ip
-                    local guest_local_ip = s_data.opponent_local_ip
-
-                    if guest_pub_ip == pub_ip and guest_local_ip ~= my_local_ip then
-                        print("\n[ICE] Hairpin detected! Hot-swapping crosshairs to LAN coordinates...")
-                        -- [FIXED] Force C-Core to Pivot to the true Local IP and Local Port
-                        net.Connect(guest_local_ip, tonumber(s_data.opponent_local_port))
-                    else
-                        print("\n[MATCHMAKER] Guest joined via WAN! Locking crosshairs...")
-                        net.Connect(guest_pub_ip, tonumber(s_data.opponent_port))
-                    end
-                    break
-                end
-                sys_sleep(1000)
-                coroutine.yield() -- Yield so the engine can render!
-            end
-        end)
-
-        -- Store it in the global context so we can pump it inside the render loop
-        _G.MatchmakerPoller = host_poll_co
-
-    else
-        print("Enter Lobby Code:")
-        io.write("> ")
-        local code = io.read("*l"):upper()
-
-        local res = http_post(MATCHMAKER_URL .. "/join/" .. code, payload)
-        local data = json_util.decode(res)
-
-        target_ip = data.opponent_ip
-        target_port = tonumber(data.opponent_port)
-
-        assert(target_ip, "FATAL: Lobby not found or full!")
-
-        -- 🚨 THE HAIRPIN BYPASS (ICE-LITE)
-        if target_ip == pub_ip then
-            print("\n[ICE] Hairpin detected! Bypassing external router...")
-            target_ip = data.opponent_local_ip
-            target_port = tonumber(data.opponent_local_port) -- [FIXED]
-        end
-
-        print(string.format("\n[MATCHMAKER] Crosshairs setting to %s:%d", target_ip, target_port))
-        assert(net.Connect(target_ip, target_port), "FATAL: Failed to set remote target!")
-    end
-
-    print("[LUA IO] Booting Headless Weaver (LABORATORY)...")
+    print("[LUA IO] Booting Headless Weaver...")
     local co = coroutine.create(boot_weaver)
-
+    
+    -- ... [The rest of your engine boot remains the same] ...
     local status, engine_ctx
     while coroutine.status(co) ~= "dead" do
         status, engine_ctx = coroutine.resume(co)
@@ -474,10 +371,6 @@ local function main()
     local accumulator = 0.0
 
     while ffi.C.vx_core_is_running() == 1 do
-
-        if _G.MatchmakerPoller and coroutine.status(_G.MatchmakerPoller) ~= "dead" then
-            coroutine.resume(_G.MatchmakerPoller)
-        end
 
         if ffi.C.vx_sys_resize_flag() == 1 then
             is_resizing = true

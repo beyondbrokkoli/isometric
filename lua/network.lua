@@ -5,12 +5,13 @@ ffi.cdef[[
     int vx_net_connect(const char* ip, int port);
     void vx_net_send(const void* payload, size_t len);
     int vx_net_poll(void* out_buffer, size_t expected_len);
+    int vx_net_stun_punch(const char* stun_ip, int stun_port, char* out_ip, int* out_port);
     int vx_net_get_last_error(void);
     void vx_net_shutdown(void);
 
     // [NEW] Rollback Interfaces
     RollbackBuffer* vx_net_get_arena(void);
-    void vx_net_commit_frame(uint32_t tick, uint32_t local_wasd, int32_t local_click);
+    void vx_net_pump(void);
 ]]
 
 local net_lib
@@ -49,8 +50,18 @@ function Network.GetArena()
     return net_lib.vx_net_get_arena()
 end
 
-function Network.CommitFrame(tick, wasd, click)
-    net_lib.vx_net_commit_frame(tick, wasd, click)
+function Network.Pump()
+    net_lib.vx_net_pump()
+end
+
+function Network.StunPunch(stun_ip, stun_port)
+    local out_ip = ffi.new("char[16]")
+    local out_port = ffi.new("int[1]")
+
+    if net_lib.vx_net_stun_punch(stun_ip, stun_port, out_ip, out_port) == 1 then
+        return ffi.string(out_ip), out_port[0]
+    end
+    return nil, nil
 end
 
 function Network.Shutdown()

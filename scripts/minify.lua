@@ -81,30 +81,30 @@ print("--- AI SNAPSHOT ---")
 local order = {
     -- [ ENTRY POINTS ]
     "main.lua",
-    "build.lua",
+--    "build.lua",
 
     -- [ C-CORE ]
 --    "c/main.c",
     "c/vx_net.c",
-    "c/shared_structs.h",
+--    "c/shared_structs.h",
 
     -- [ LUA ENGINE MODULES ]
-    "lua/registry_vk.lua",
-    "lua/sequence.lua",
+--    "lua/registry_vk.lua",
+--    "lua/sequence.lua",
 --    "lua/pipeline_manifest.lua",
 --    "lua/vulkan_core.lua",
-
 --    "lua/swapchain.lua",
 --    "lua/descriptors.lua",
 --    "lua/graphics_pipeline.lua",
 --    "lua/compute_pipeline.lua",
 --    "lua/renderer.lua",
-    "lua/memory.lua",
+--    "lua/memory.lua",
 --    "lua/vmath.lua",
-    "lua/structs.lua",
+--    "lua/structs.lua",
 --    "lua/config_engine.lua",
-    "lua/registry_export.lua",
+--    "lua/registry_export.lua",
     "lua/network.lua",
+--    "lua/camera.lua",
 
     -- [ GLSL SHADERS & SSOT ]
 --    "glsl/registry.glsl",

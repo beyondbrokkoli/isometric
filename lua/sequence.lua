@@ -35,25 +35,8 @@ seq.boot = {
     {
         name = "Memory Arenas Allocation",
         action = function(ctx)
-            local memory = require("memory")
-
-            -- Boot the Timeline Semaphore Subsystem
-            memory.InitTransferSubsystem(ctx.vk_runtime)
-
-            -- 1. Standard ReBAR Arenas (For continuous lockstep data)
-            for _, arena in ipairs(cfg.memory_arenas) do
-                memory.CreateHostVisibleBuffer(arena.name, arena.cdef_type, arena.count, arena.usage, ctx.vk_runtime)
-            end
-
-            -- 2. The Transfer Pipeline (For static textures/palettes)
-            -- Staging is ReBAR. Haven is pure DEVICE_LOCAL VRAM.
-            -- 1024 vec4 colors = 16 bytes * 1024 = 16384 bytes (16 KB)
-            local palette_bytes = 16384
-            local usage_staging = 1 -- VK_BUFFER_USAGE_TRANSFER_SRC_BIT
-            local usage_haven = bit.bor(2, 128) -- VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-
-            memory.CreateHostVisibleBuffer("PALETTE_STAGING", "uint8_t", palette_bytes, usage_staging, ctx.vk_runtime)
-            memory.CreateBufferHaven("PALETTE_HAVEN", palette_bytes, usage_haven, ctx.vk_runtime)
+            local arena_mgr = require("arena_manager")
+            arena_mgr.AllocateArenas(ctx.vk_runtime)
         end
     },
     {

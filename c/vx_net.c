@@ -92,6 +92,16 @@ static inline int net_init_platform(void) {
  * Bind a UDP socket to port for receiving/sending.
  * Returns: 0 on success, -1 on failure.
  */
+
+#if defined(_WIN32)
+    #include <mstcpip.h>
+
+    // [MINGW FIX] If the compiler headers are missing the Microsoft IOCTL, manually define it.
+    #ifndef SIO_UDP_CONNRESET
+        #define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+    #endif
+#endif
+
 EXPORT int vx_net_host(int port) {
     if (g_net.sock != NET_INVALID) {
         NET_CLOSE(g_net.sock);
@@ -137,6 +147,13 @@ EXPORT int vx_net_host(int port) {
         atomic_store_explicit(&g_net.last_error, NET_LASTERR, memory_order_release);
         return -1;
     }
+
+#if defined(_WIN32)
+    // [CRITICAL WINDOWS FIX] Disable WSAECONNRESET for UDP Hole Punching
+    DWORD dwBytesReturned = 0;
+    BOOL bNewBehavior = FALSE;
+    WSAIoctl(sock, SIO_UDP_CONNRESET, &bNewBehavior, sizeof(bNewBehavior), NULL, 0, &dwBytesReturned, NULL, NULL);
+#endif
 
     g_net.sock = sock;
     g_net.is_bound = 1;
@@ -191,39 +208,44 @@ EXPORT void vx_net_send(const void* payload, size_t len) {
            (struct sockaddr*)&g_net.remote_addr, g_net.remote_addr_len);
 }
 
-// Read exactly 'expected_len' bytes into the pointer
 EXPORT int vx_net_poll(void* out_buffer, size_t expected_len) {
     if (g_net.sock == NET_INVALID || !out_buffer) return 0;
 
     struct sockaddr_in from;
     socklen_t from_len = sizeof(from);
 
-    // [THE FIX] Internal loop to chew through queued network errors (WSAECONNRESET)
-    // and garbage packets without breaking the external timeline draining loop.
-    while (1) {
-        ssize_t recvd = recvfrom(g_net.sock, (char*)out_buffer, expected_len, 0, (struct sockaddr*)&from, &from_len);
+    // [FIXED] The MTU Shield prevents Linux STUN truncation
+    char temp_buf[2048];
 
-        if (recvd == expected_len) {
-            g_net.is_connected = 1;
-            return 1; // Got a valid packet, send it to the rollback arena
-        }
+    // [FIXED] Limit iterations to prevent infinite CPU spin loops
+    // on persistent socket errors (like WSAECONNRESET) or packet floods.
+    for (int i = 0; i < 100; i++) {
+        ssize_t recvd = recvfrom(g_net.sock, temp_buf, sizeof(temp_buf), 0, (struct sockaddr*)&from, &from_len);
 
         if (recvd < 0) {
-            int err = NET_LASTERR;
-
-            // If the socket is genuinely empty, NOW we can safely break out.
-            if (err == NET_WOULDBLOCK) {
-                return 0;
-            }
-
-            // Otherwise, it's a non-fatal anomaly (like a queued ICMP unreachable).
-            // Continue the loop to instantly eat the error and grab the next packet.
-            continue;
+            // For non-blocking sockets, ANY error means no more valid data is available right now.
+            // Returning 0 safely yields execution back to the Lua engine.
+            return 0;
         }
 
-        // If recvd > 0 but != expected_len, it's a corrupted/wrong-size packet.
-        // Ignore it and continue reading.
+        // Only pivot and process if it is EXACTLY the size of a LockstepPacket
+        if (recvd == expected_len) {
+            memcpy(out_buffer, temp_buf, expected_len);
+            g_net.is_connected = 1;
+
+            // 🚨 THE UDP PIVOT HACK
+            // Instantly lock our outgoing crosshairs onto whoever just spoke to us.
+            g_net.remote_addr = from;
+            g_net.remote_addr_len = from_len;
+
+            return 1;
+        }
+
+        // If recvd != expected_len, it is a delayed STUN response or background noise.
+        // It silently falls through and the for-loop grabs the next packet in the buffer.
     }
+
+    return 0;
 }
 
 /**
@@ -242,26 +264,17 @@ EXPORT RollbackBuffer* vx_net_get_arena(void) {
     return &g_rollback_arena;
 }
 
-EXPORT void vx_net_commit_frame(uint32_t tick, uint32_t local_wasd, int32_t local_click) {
+EXPORT void vx_net_pump(void) {
+    // 1. Grab the current tick that Lua just wrote into the shared arena
+    uint32_t tick = g_rollback_arena.head_tick;
     uint32_t idx = tick & NET_RING_MASK;
-
-    // 1. Purge ancient slots
-    if (g_rollback_arena.frames[idx].tick != tick) {
-        g_rollback_arena.frames[idx].state = FRAME_STATE_EMPTY; // <-- THE FIX
-        g_rollback_arena.frames[idx].remote_input = 0;
-        g_rollback_arena.frames[idx].remote_click = -1;
-    }
-
-    g_rollback_arena.frames[idx].tick = tick;
-    g_rollback_arena.frames[idx].local_input = local_wasd;
-    g_rollback_arena.frames[idx].local_click = local_click;
-    g_rollback_arena.head_tick = tick;
+    RollbackFrame* current_frame = &g_rollback_arena.frames[idx];
 
     // 2. Broadcast local reality over UDP (With Redundant History)
     LockstepPacket out_pkt;
     out_pkt.frame_tick = tick;
-    out_pkt.player_input = local_wasd;
-    out_pkt.click_grid_idx = local_click;
+    out_pkt.player_input = current_frame->local_input;
+    out_pkt.click_grid_idx = current_frame->local_click;
 
     for (int i = 1; i <= 7; i++) {
         uint32_t p_tick = tick - i;
@@ -275,13 +288,12 @@ EXPORT void vx_net_commit_frame(uint32_t tick, uint32_t local_wasd, int32_t loca
     LockstepPacket in_pkt;
     while (vx_net_poll(&in_pkt, sizeof(LockstepPacket))) {
 
-        // 🚨 REDUNDANT HISTORY RECOVERY (Process oldest to newest)
+        // REDUNDANT HISTORY RECOVERY (Process oldest to newest)
         for (int i = 7; i >= 1; i--) {
             uint32_t h_tick = in_pkt.frame_tick - i;
             uint32_t h_idx = h_tick & NET_RING_MASK;
             RollbackFrame* h_frame = &g_rollback_arena.frames[h_idx];
 
-            // If this past frame is still sitting in a predicted state, recover its true reality!
             if (h_frame->state == FRAME_STATE_PREDICTED && h_frame->tick == h_tick) {
                 uint32_t h_input = in_pkt.past_inputs[i-1];
                 int32_t h_click = in_pkt.past_clicks[i-1];
@@ -297,10 +309,11 @@ EXPORT void vx_net_commit_frame(uint32_t tick, uint32_t local_wasd, int32_t loca
                 h_frame->state = FRAME_STATE_CONFIRMED;
             }
         }
+
         uint32_t r_idx = in_pkt.frame_tick & NET_RING_MASK;
         RollbackFrame* r_frame = &g_rollback_arena.frames[r_idx];
 
-        // 🚨 THE GHOST SHIELD: Exorcise ancient delayed packets
+        // THE GHOST SHIELD: Exorcise ancient delayed packets
         if ((int32_t)(in_pkt.frame_tick - r_frame->tick) < 0 && r_frame->tick != 0) {
             printf("[NET] 🚨 EXORCISM: Dropped ancient packet %u! Slot already claimed by %u.\n",
                    in_pkt.frame_tick, r_frame->tick);
@@ -329,12 +342,80 @@ EXPORT void vx_net_commit_frame(uint32_t tick, uint32_t local_wasd, int32_t loca
     }
 
     // 4. Predict the future if we didn't get a confirmation
-    if (g_rollback_arena.frames[idx].state != FRAME_STATE_CONFIRMED) {
+    if (current_frame->state != FRAME_STATE_CONFIRMED) {
         uint32_t prev_idx = (tick - 1) & NET_RING_MASK;
-        g_rollback_arena.frames[idx].remote_input = g_rollback_arena.frames[prev_idx].remote_input;
-        g_rollback_arena.frames[idx].remote_click = -1;
-        g_rollback_arena.frames[idx].state = FRAME_STATE_PREDICTED;
+        current_frame->remote_input = g_rollback_arena.frames[prev_idx].remote_input;
+        current_frame->remote_click = -1;
+        current_frame->state = FRAME_STATE_PREDICTED;
     }
+}
+
+/**
+ * vx_net_stun_punch(ip, port, out_ip, out_port)
+ * Fires a STUN Binding Request using the already-bound g_net.sock.
+ * Extracts the NAT-translated Public IP and Port.
+ */
+EXPORT int vx_net_stun_punch(const char* stun_server_ip, int stun_port, char* out_ip, int* out_port) {
+    if (g_net.sock == NET_INVALID) return 0;
+
+    struct sockaddr_in stun_addr = {0};
+    stun_addr.sin_family = AF_INET;
+    stun_addr.sin_port = htons((uint16_t)stun_port);
+    inet_pton(AF_INET, stun_server_ip, &stun_addr.sin_addr);
+
+    // Construct a raw STUN Binding Request
+    uint8_t req[20] = {0};
+    req[0] = 0x00; req[1] = 0x01; // Type: Binding Request
+    req[4] = 0x21; req[5] = 0x12; req[6] = 0xA4; req[7] = 0x42; // Magic Cookie
+    for(int i = 8; i < 20; i++) req[i] = i; // Dummy Transaction ID
+
+    sendto(g_net.sock, (const char*)req, 20, 0, (struct sockaddr*)&stun_addr, sizeof(stun_addr));
+
+    uint8_t resp[1024];
+    struct sockaddr_in from;
+    socklen_t from_len = sizeof(from);
+
+    // Timeout loop (Socket is non-blocking)
+    for (int wait = 0; wait < 50; wait++) {
+        ssize_t recvd = recvfrom(g_net.sock, (char*)resp, sizeof(resp), 0, (struct sockaddr*)&from, &from_len);
+
+        if (recvd >= 20) {
+            uint16_t msg_len = (resp[2] << 8) | resp[3];
+            int offset = 20;
+
+            // Parse STUN Attributes looking for XOR-MAPPED-ADDRESS (0x0020)
+            while (offset < 20 + msg_len && offset + 4 <= recvd) {
+                uint16_t attr_type = (resp[offset] << 8) | resp[offset+1];
+                uint16_t attr_len = (resp[offset+2] << 8) | resp[offset+3];
+
+                if (attr_type == 0x0020) {
+                    uint16_t xport = (resp[offset+6] << 8) | resp[offset+7];
+                    uint32_t xip = (resp[offset+8] << 24) | (resp[offset+9] << 16) | (resp[offset+10] << 8) | resp[offset+11];
+
+                    // Un-XOR against the Magic Cookie
+                    *out_port = xport ^ 0x2112;
+                    uint32_t real_ip = xip ^ 0x2112A442;
+
+                    snprintf(out_ip, 16, "%d.%d.%d.%d",
+                        (real_ip >> 24) & 0xFF, (real_ip >> 16) & 0xFF,
+                        (real_ip >> 8) & 0xFF, real_ip & 0xFF);
+
+                    return 1; // STUN Hole Punch Success!
+                }
+
+                // Enforce RFC 5389 4-byte padding alignment!
+                int padded_len = (attr_len + 3) & ~3;
+                offset += 4 + padded_len;
+            }
+        }
+
+#if defined(_WIN32)
+        Sleep(10);
+#else
+        usleep(10000);
+#endif
+    }
+    return 0; // STUN timeout
 }
 
 EXPORT void vx_net_shutdown(void) {
