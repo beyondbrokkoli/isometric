@@ -196,6 +196,13 @@ local function main()
     local VPS_IP = "138.199.152.240" -- Hetzner VPS
     local MATCHMAKER_URL = "http://" .. VPS_IP .. ":8080"
 
+    -- Inside your Host/Join matchmaker logic in main.lua:
+    local RELAY_IP = "138.199.152.240" -- Hetzner IP
+    local RELAY_PORT = 49152
+    local connection_timeout = 180 -- ~3 seconds at 60Hz
+    -- Put this near the top of main(), before the user inputs 1 or 2
+    _G.ice_fuse = -1
+
     print("========================================")
     print(" WEAVER ENGINE: HYBRID WAN/LAN PLAY     ")
     print("========================================")
@@ -251,12 +258,14 @@ local function main()
 
                     if guest_pub_ip == pub_ip and guest_local_ip ~= my_local_ip then
                         print("\n[ICE] Hairpin detected! Hot-swapping crosshairs to LAN coordinates...")
-                        -- [FIXED] Force C-Core to Pivot to the true Local IP and Local Port
                         net.Connect(guest_local_ip, tonumber(s_data.opponent_local_port))
                     else
                         print("\n[MATCHMAKER] Guest joined via WAN! Locking crosshairs...")
                         net.Connect(guest_pub_ip, tonumber(s_data.opponent_port))
                     end
+
+                    -- 🚨 THE GUEST HAS ARRIVED. LIGHT THE 3-SECOND FUSE!
+                    _G.ice_fuse = 480
                     break
                 end
                 sys_sleep(1000)
@@ -284,11 +293,14 @@ local function main()
         if target_ip == pub_ip then
             print("\n[ICE] Hairpin detected! Bypassing external router...")
             target_ip = data.opponent_local_ip
-            target_port = tonumber(data.opponent_local_port) -- [FIXED]
+            target_port = tonumber(data.opponent_local_port)
         end
 
         print(string.format("\n[MATCHMAKER] Crosshairs setting to %s:%d", target_ip, target_port))
         assert(net.Connect(target_ip, target_port), "FATAL: Failed to set remote target!")
+
+        -- 🚨 TARGET ACQUIRED. LIGHT THE 3-SECOND FUSE!
+        _G.ice_fuse = 480
     end
 
     print("[LUA IO] Booting Headless Weaver (LABORATORY)...")
@@ -553,7 +565,19 @@ local function main()
                     -- We are in the past! Force the accumulator to swallow the time gap
                     accumulator = accumulator + ((remote_highest - sim_tick_count) * FIXED_DT)
                 end
-                -- ❌ DELETE THE `elseif sim_tick_count > remote_highest + 4` BLOCK FROM HERE
+            else
+                -- [NEW] ICE FALLBACK TIMEOUT
+                -- Only count down if the fuse has been explicitly lit!
+                if not network_locked and _G.ice_fuse > 0 then
+                    _G.ice_fuse = _G.ice_fuse - 1
+
+                    if _G.ice_fuse == 0 then
+                        print("\n[ICE] P2P Hole Punch Failed! Initiating Cloud Relay Fallback...")
+                        local RELAY_IP = "138.199.152.240" -- Hetzner IP
+                        local RELAY_PORT = 49152
+                        net.Connect(RELAY_IP, RELAY_PORT)
+                    end
+                end
             end
 
             local mouse_left = ffi.C.vx_input_mouse_btn(0)
