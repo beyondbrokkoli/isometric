@@ -1,28 +1,3 @@
-Here is a polished, highly technical, and visually clean README drafted for the Weaver engine. It frames the project as a futuristic, strictly data-driven spiritual successor to frameworks like LÖVE2D, while heavily emphasizing the new low-level Vulkan architecture, anti-OOP philosophy, and the massive leap into deterministic rollback networking.
-
----
-
-## **WEAVER** > *A violently fast, data-driven Vulkan/LuaJIT engine. Think LÖVE2D, but ripped into the future where mainline 3D and lockstep network execution are built-in.*
-
-Weaver is a hybrid C/Lua engine built on a strict headless C-Core and managed by a LuaJIT "OS" thread. It ruthlessly rejects object-oriented patterns in favor of data-oriented design, pure Structure of Arrays (SoA) memory mapping, and deterministic lockstep simulation.
-
-Welcome to the Laboratory.
-
----
-
-### 🚀 **The Evolution: Isometric RTS Build**
-
-The engine has graduated from its legacy 3D particle swarm testing phase. The current master branch represents a massive architectural leap focused on a deterministic, grid-based isometric environment (the "Data-Driven Pizza World") powered by a custom rollback netcode subsystem.
-
-| Feature Area | Legacy Swarm Build | New Isometric RTS Build |
-| --- | --- | --- |
-| **Simulation** | Floating-point chaotic particles | Strict deterministic grid state |
-| **Networking** | Offline / Local mockups | UDP Lockstep with Quantum Rollback |
-| **Matchmaking** | Hardcoded IPs | STUN Hole-Punching & ICE Hairpinning |
-| **Rendering** | Infinite Reverse-Z Depth | Strict Topology & Orthographic Projection |
-
----
-
 ### 🌐 **Next-Gen Multiplayer Architecture**
 
 The crown jewel of the new build is the `vx_net` C-backend and the Lua-driven matchmaker, enabling seamless competitive play without dedicated simulation servers.
