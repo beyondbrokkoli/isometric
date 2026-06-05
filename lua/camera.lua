@@ -11,7 +11,7 @@ function Camera.new()
         yaw = 0.785398,
         pitch = 0.615472,
         pos = { x = 0.0, y = 0.0, z = 0.0 },
-        move_speed = 1250.0,
+        move_speed = 800.0,
         proj = ffi.new("mat4_t"),
         view = ffi.new("mat4_t")
     }
