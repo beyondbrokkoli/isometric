@@ -7,6 +7,7 @@ ffi.cdef[[
     int vx_net_poll(void* out_buffer, size_t expected_len);
     int vx_net_stun_punch(const char* stun_ip, int stun_port, char* out_ip, int* out_port);
     int vx_net_get_last_error(void);
+    void vx_net_set_session(uint64_t token);
     void vx_net_shutdown(void);
 
     // [NEW] Rollback Interfaces
@@ -52,6 +53,11 @@ end
 
 function Network.Pump()
     net_lib.vx_net_pump()
+end
+
+-- Expose it nicely in your module table
+function Network.SetSession(token)
+    net_lib.vx_net_set_session(token)
 end
 
 function Network.StunPunch(stun_ip, stun_port)

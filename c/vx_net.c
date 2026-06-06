@@ -41,19 +41,25 @@
     #define NET_LASTERR errno
 #endif
 
-// Internal Network State (lock-free for single-threaded Lua access)
+
 static struct {
-    vx_socket_t sock; /* [FIXED] Now properly scales to 64-bit on Windows */
+    vx_socket_t sock;
     int is_bound;
     int is_connected;
     struct sockaddr_in remote_addr;
     socklen_t remote_addr_len;
     _Atomic(int) last_error;
+
+    // Hardening variables
+    uint64_t current_session_token;
+    int is_address_pinned;
 } g_net = {
     .sock = NET_INVALID,
     .is_bound = 0,
     .is_connected = 0,
-    .remote_addr_len = sizeof(struct sockaddr_in)
+    .remote_addr_len = sizeof(struct sockaddr_in),
+    .current_session_token = 0,
+    .is_address_pinned = 0
 };
 
 // Platform Abstraction: Non-blocking socket setup
@@ -208,43 +214,57 @@ EXPORT void vx_net_send(const void* payload, size_t len) {
            (struct sockaddr*)&g_net.remote_addr, g_net.remote_addr_len);
 }
 
+// Exported initialization called right after matchmaker handoff
+EXPORT void vx_net_set_session(uint64_t token) {
+    g_net.current_session_token = token;
+    g_net.is_address_pinned = 0; // Reset tracking for new match
+}
+
 EXPORT int vx_net_poll(void* out_buffer, size_t expected_len) {
     if (g_net.sock == NET_INVALID || !out_buffer) return 0;
 
     struct sockaddr_in from;
     socklen_t from_len = sizeof(from);
-
-    // [FIXED] The MTU Shield prevents Linux STUN truncation
     char temp_buf[2048];
 
-    // [FIXED] Limit iterations to prevent infinite CPU spin loops
-    // on persistent socket errors (like WSAECONNRESET) or packet floods.
+    // Process up to 100 packets in queue per frame execution
     for (int i = 0; i < 100; i++) {
         ssize_t recvd = recvfrom(g_net.sock, temp_buf, sizeof(temp_buf), 0, (struct sockaddr*)&from, &from_len);
-
         if (recvd < 0) {
-            // For non-blocking sockets, ANY error means no more valid data is available right now.
-            // Returning 0 safely yields execution back to the Lua engine.
-            return 0;
+            return 0; // Queue empty for this frame
         }
 
-        // Only pivot and process if it is EXACTLY the size of a LockstepPacket
         if (recvd == expected_len) {
+            LockstepPacket* incoming = (LockstepPacket*)temp_buf;
+
+            // CRITICAL SECURITY CHECK 1: Validate Matchmaker Session Token
+            if (incoming->session_token != g_net.current_session_token) {
+                // Silently drop unauthorized packets (prevents port scanning leaks)
+                continue;
+            }
+
+            // CRITICAL SECURITY CHECK 2: Validate Pinned Address
+            if (g_net.is_address_pinned) {
+                if (from.sin_addr.s_addr != g_net.remote_addr.sin_addr.s_addr ||
+                    from.sin_port != g_net.remote_addr.sin_port) {
+                    // Hijack attempt caught! Someone with a leaked token or an old packet is spoofing.
+                    continue;
+                }
+            } else {
+                // First valid packet encountered! Pin the connection securely.
+                g_net.is_connected = 1;
+                g_net.remote_addr = from;
+                g_net.remote_addr_len = from_len;
+                g_net.is_address_pinned = 1;
+                fprintf(stderr, "[SECURITY] Session locked securely to peer source: %s:%d\n",
+                        inet_ntoa(from.sin_addr), ntohs(from.sin_port));
+            }
+
+            // Validation checks passed successfully. Extract the packet payload.
             memcpy(out_buffer, temp_buf, expected_len);
-            g_net.is_connected = 1;
-
-            // 🚨 THE UDP PIVOT HACK
-            // Instantly lock our outgoing crosshairs onto whoever just spoke to us.
-            g_net.remote_addr = from;
-            g_net.remote_addr_len = from_len;
-
             return 1;
         }
-
-        // If recvd != expected_len, it is a delayed STUN response or background noise.
-        // It silently falls through and the for-loop grabs the next packet in the buffer.
     }
-
     return 0;
 }
 
@@ -272,6 +292,10 @@ EXPORT void vx_net_pump(void) {
 
     // 2. Broadcast local reality over UDP (With Redundant History)
     LockstepPacket out_pkt;
+
+    // [THE FIX] Inject the crypto token into the packet header!
+    out_pkt.session_token = g_net.current_session_token;
+
     out_pkt.frame_tick = tick;
     out_pkt.player_input = current_frame->local_input;
     out_pkt.click_grid_idx = current_frame->local_click;

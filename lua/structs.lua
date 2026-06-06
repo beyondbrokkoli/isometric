@@ -89,13 +89,14 @@ M.specs = {
         }
     },
     {
-        name = "LockstepPacket", c_only = true, align = 4, force_align = true,
+        name = "LockstepPacket", c_only = true, align = 8, force_align = true,
         members = {
+            { type = "uint64_t", name = "session_token" }, -- The crypto handshake key
             { type = "uint32_t", name = "frame_tick" },
             { type = "uint32_t", name = "player_input" },
             { type = "int32_t", name = "click_grid_idx" },
-            { type = "uint32_t", name = "past_inputs", count = 7 }, -- [NEW] Redundant WASD
-            { type = "int32_t", name = "past_clicks", count = 7 }    -- [NEW] Redundant Clicks
+            { type = "uint32_t", name = "past_inputs", count = 7 },
+            { type = "int32_t", name = "past_clicks", count = 7 }
         }
     },
     -- [NEW] Rollback Network Engine Core Containment Types

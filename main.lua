@@ -194,7 +194,7 @@ end
 
 local function main()
     local VPS_IP = "138.199.152.240" -- Hetzner VPS
-    local MATCHMAKER_URL = "http://" .. VPS_IP .. ":8080"
+    local MATCHMAKER_URL = "http://" .. VPS_IP -- .. ":8080"
 
     -- Inside your Host/Join matchmaker logic in main.lua:
     local RELAY_IP = "138.199.152.240" -- Hetzner IP
@@ -239,41 +239,61 @@ local function main()
         local lobby_id = data.lobby_id
         assert(lobby_id, "FATAL: Server response did not contain a 'lobby_id'!")
 
+        -- [NEW SECURITY] Extract and Lock Session Token
+        local runtime_token = tonumber(data.session_token) or 0
+        net.SetSession(runtime_token)
+
         print(string.format("[LOBBY] Session Hosted! Invite Code: [%s]", lobby_id))
-        print("[LOBBY] Booting engine immediately. Map will render while waiting for Guest...")
+        print(string.format("[SECURITY] Session Token Locked: %016X", runtime_token))
+        print("[LOBBY] Booting engine immediately. Map will render smoothly while waiting...")
 
         -- The Keep-Alive Blind Pivot
         target_ip = VPS_IP
         target_port = 3478
 
-        -- Background Polling Coroutine (DO NOT trap the main thread with a while loop here!)
+        -- [QoL UPGRADE] Non-Blocking Background Polling Coroutine
         local host_poll_co = coroutine.create(function()
+            local last_poll_time = 0
             while true do
-                local s_res = http_get(MATCHMAKER_URL .. "/status/" .. lobby_id)
-                local success, s_data = pcall(json_util.decode, s_res)
+                local current_time = get_time_hires()
 
-                if success and s_data.status == "ready" then
-                    local guest_pub_ip = s_data.opponent_ip
-                    local guest_local_ip = s_data.opponent_local_ip
+                -- Only hit the API once per second, without freezing the thread
+                if (current_time - last_poll_time) >= 1.0 then
+                    last_poll_time = current_time
+                    local s_res = http_get(MATCHMAKER_URL .. "/status/" .. lobby_id)
+                    local success, s_data = pcall(json_util.decode, s_res)
 
-                    if guest_pub_ip == pub_ip and guest_local_ip ~= my_local_ip then
-                        print("\n[ICE] Hairpin detected! Hot-swapping crosshairs to LAN coordinates...")
-                        net.Connect(guest_local_ip, tonumber(s_data.opponent_local_port))
-                    else
-                        print("\n[MATCHMAKER] Guest joined via WAN! Locking crosshairs...")
-                        net.Connect(guest_pub_ip, tonumber(s_data.opponent_port))
+                    if success and s_data.status == "ready" then
+                        local guest_pub_ip = s_data.opponent_ip
+                        local guest_local_ip = s_data.opponent_local_ip
+                        local guest_port = tonumber(s_data.opponent_port)
+                        local guest_local_port = tonumber(s_data.opponent_local_port)
+
+                        -- [QoL UPGRADE] The 3-Tier Routing Protocol
+                        if guest_pub_ip == pub_ip then
+                            if guest_local_ip == my_local_ip then
+                                print("\n[ICE] Same-machine detected! Bypassing NIC entirely...")
+                                net.Connect("127.0.0.1", guest_local_port)
+                            else
+                                print("\n[ICE] LAN Hairpin detected! Hot-swapping crosshairs to local network...")
+                                net.Connect(guest_local_ip, guest_local_port)
+                            end
+                        else
+                            print("\n[MATCHMAKER] Guest joined via WAN! Locking crosshairs...")
+                            net.Connect(guest_pub_ip, guest_port)
+                        end
+
+                        -- 🚨 THE GUEST HAS ARRIVED. LIGHT THE 3-SECOND FUSE!
+                        _G.ice_fuse = 480
+                        break
                     end
-
-                    -- 🚨 THE GUEST HAS ARRIVED. LIGHT THE 3-SECOND FUSE!
-                    _G.ice_fuse = 480
-                    break
                 end
-                sys_sleep(1000)
-                coroutine.yield() -- Yield so the engine can render!
+
+                -- Yield immediately so the render loop hits maximum FPS
+                coroutine.yield()
             end
         end)
 
-        -- Store it in the global context so we can pump it inside the render loop
         _G.MatchmakerPoller = host_poll_co
 
     else
@@ -286,14 +306,24 @@ local function main()
 
         target_ip = data.opponent_ip
         target_port = tonumber(data.opponent_port)
-
         assert(target_ip, "FATAL: Lobby not found or full!")
 
-        -- 🚨 THE HAIRPIN BYPASS (ICE-LITE)
+        -- [NEW SECURITY] Extract and Lock Session Token
+        local runtime_token = tonumber(data.session_token) or 0
+        net.SetSession(runtime_token)
+        print(string.format("[SECURITY] Session Token Locked: %016X", runtime_token))
+
+        -- [QoL UPGRADE] The 3-Tier Routing Protocol (Joiner Side)
         if target_ip == pub_ip then
-            print("\n[ICE] Hairpin detected! Bypassing external router...")
-            target_ip = data.opponent_local_ip
-            target_port = tonumber(data.opponent_local_port)
+            if data.opponent_local_ip == my_local_ip then
+                print("\n[ICE] Same-machine detected! Bypassing NIC entirely...")
+                target_ip = "127.0.0.1"
+                target_port = tonumber(data.opponent_local_port)
+            else
+                print("\n[ICE] LAN Hairpin detected! Bypassing external router...")
+                target_ip = data.opponent_local_ip
+                target_port = tonumber(data.opponent_local_port)
+            end
         end
 
         print(string.format("\n[MATCHMAKER] Crosshairs setting to %s:%d", target_ip, target_port))

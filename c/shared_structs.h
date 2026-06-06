@@ -87,12 +87,14 @@ typedef struct __attribute__((packed, aligned(64))) {
     uint8_t _pad_tail[48];
 } RenderPacket;
 
-typedef struct __attribute__((packed, aligned(4))) {
+typedef struct __attribute__((packed, aligned(8))) {
+    uint64_t session_token;
     uint32_t frame_tick;
     uint32_t player_input;
     int32_t click_grid_idx;
     uint32_t past_inputs[7];
     int32_t past_clicks[7];
+    uint8_t _pad_tail[4];
 } LockstepPacket;
 
 typedef struct __attribute__((packed, aligned(4))) {
