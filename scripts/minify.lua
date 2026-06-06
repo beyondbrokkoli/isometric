@@ -81,7 +81,7 @@ print("--- AI SNAPSHOT ---")
 local order = {
     -- [ ENTRY POINTS ]
 --    "main.lua",
-    "build.lua",
+--    "build.lua",
 
     -- [ C-CORE ]
 --    "c/main.c",
@@ -89,9 +89,9 @@ local order = {
 --    "c/shared_structs.h",
 
     -- [ LUA ENGINE MODULES ]
-    "lua/registry_vk.lua",
-    "lua/sequence.lua",
-    "lua/pipeline_manifest.lua",
+--    "lua/registry_vk.lua",
+--    "lua/sequence.lua",
+--    "lua/pipeline_manifest.lua",
 --    "lua/vulkan_core.lua",
 --    "lua/swapchain.lua",
 --    "lua/descriptors.lua",
@@ -101,18 +101,18 @@ local order = {
 --    "lua/renderer.lua",
 --    "lua/memory.lua",
 --    "lua/vmath.lua",
-    "lua/structs.lua",
-    "lua/config_engine.lua",
-    "lua/registry_export.lua",
+--    "lua/structs.lua",
+--    "lua/config_engine.lua",
+--    "lua/registry_export.lua",
 --    "lua/network.lua",
 --    "lua/camera.lua",
-    "lua/json_util.lua",
+--    "lua/json_util.lua",
 
     -- [ GLSL SHADERS & SSOT ]
---    "glsl/registry.glsl",
---    "glsl/shared.glsl",
---    "glsl/render.vert",
---    "glsl/render.frag",
+    "glsl/registry.glsl",
+    "glsl/shared.glsl",
+    "glsl/render.vert",
+    "glsl/render.frag",
 }
 
 for _, src in ipairs(order) do local f = io.open(src, "r") if f then

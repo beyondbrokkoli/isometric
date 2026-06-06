@@ -148,19 +148,51 @@ local function matrix_raycast_terrain(mouse_x, mouse_y, screen_w, screen_h, view
 
     return -1
 end
--- [NEW] Zero-dependency HTTP helpers exploiting local curl
+
 local function http_post(url, json_payload)
-    local cmd = string.format("curl -s -X POST -H 'Content-Type: application/json' -d '%s' %s", json_payload, url)
-    local f = io.popen(cmd)
-    local res = f:read("*a")
+    -- 1. Write the payload to a temporary file to bypass Windows/Linux quote parsing
+    local payload_path = "matchmaker_payload.json"
+    local f = assert(io.open(payload_path, "w"), "Failed to open temporary payload file")
+    f:write(json_payload)
     f:close()
+
+    -- 2. Use double quotes for headers, and the @ syntax to tell curl to read the file
+    local cmd = string.format('curl -s -X POST -H "Content-Type: application/json" -d "@%s" %s', payload_path, url)
+    local pf = io.popen(cmd)
+    local res = pf:read("*a")
+    pf:close()
+
+    -- 3. Clean up the temp file
+    os.remove(payload_path)
+
+    -- 4. The Smoking Gun Logger: If it fails again, print exactly what FastAPI is complaining about
+    if not res:match("lobby_id") then
+        print("\n[DEBUG] API REJECTED PAYLOAD! RAW SERVER RESPONSE:")
+        print(res .. "\n")
+    end
+
     return res
 end
 
 local function http_get(url)
-    local f = io.popen("curl -s " .. url)
+    -- Wrap the URL in double quotes to protect it from Windows cmd.exe parsing rules.
+    -- This shields any unexpected characters from breaking the terminal execution.
+    local cmd = string.format('curl -s "%s"', url)
+
+    local f = io.popen(cmd)
+    if not f then return "" end
+
     local res = f:read("*a")
     f:close()
+
+    -- The Smoking Gun Logger (GET Edition)
+    -- If FastAPI throws a 404 or 422, it usually packs it inside a "detail" JSON key.
+    if res:match('"detail"') then
+        print("\n[DEBUG] API GET REJECTED! RAW SERVER RESPONSE:")
+        print("Target URL: " .. url)
+        print("Response: " .. res .. "\n")
+    end
+
     return res
 end
 
