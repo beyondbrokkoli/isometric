@@ -166,7 +166,7 @@ local function http_post(url, json_payload)
     os.remove(payload_path)
 
     -- 4. The Smoking Gun Logger: If it fails again, print exactly what FastAPI is complaining about
-    if not res:match("lobby_id") then
+    if not res:match("session_token") then
         print("\n[DEBUG] API REJECTED PAYLOAD! RAW SERVER RESPONSE:")
         print(res .. "\n")
     end
