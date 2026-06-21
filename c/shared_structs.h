@@ -41,10 +41,6 @@ typedef struct __attribute__((packed)) {
     uint8_t _pad_tail[4];
 } PushConstants;
 
-typedef struct __attribute__((packed, aligned(64))) {
-    uint16_t multiverse_terrain[8][262144];
-} MultiverseArena;
-
 typedef struct __attribute__((packed)) {
     uint64_t pipeline_id;
     uint64_t descriptor_set;
@@ -130,6 +126,11 @@ typedef struct __attribute__((packed, aligned(64))) {
     NetworkFrame frames[512];
     uint8_t _pad_tail[8];
 } RollbackBuffer;
+
+typedef struct __attribute__((packed)) {
+    uint16_t len;
+    uint8_t data[2048];
+} RxPacket;
 
 #ifdef VX_ENABLE_VULKAN_STRUCTS
         typedef struct {

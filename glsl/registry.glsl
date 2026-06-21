@@ -38,10 +38,6 @@ struct PushConstants {
     // Tail padded by 4 bytes
 };
 
-struct MultiverseArena {
-    uint multiverse_terrain[8][262144];
-};
-
 struct NetworkFrame {
     uint tick;
     uint state;
