@@ -238,7 +238,12 @@ local function BootstrapNetworkTopology(local_port, my_local_ip)
 
     if real_time_remaining > 0 then
         print(string.format("[ICE] Quorum locked. Initiating Mutual Handshake for %.2f seconds...", real_time_remaining))
-        local handshake_buffer = ffi.new("LockstepPacket[32]")
+
+        -- [!] NEW: Use the dynamic header size and RxPacket buffer
+        local header_size = ffi.offsetof("LockstepPacket", "commands")
+        local scratch_handshake = ffi.new("LockstepPacket")
+        local handshake_buffer = ffi.new("RxPacket[32]")
+
         local p2p_heard = {}
 
         while (get_time_hires() - sync_start_time) < real_time_remaining do
@@ -248,17 +253,23 @@ local function BootstrapNetworkTopology(local_port, my_local_ip)
                     ping_pkt.session_token = session_token
                     ping_pkt.player_id = local_id
                     ping_pkt.frame_tick = p2p_heard[peer_id] and 1 or 0
-                    net.SendTo(ping_pkt, peer_id)
+
+                    -- [!] Send ONLY the 60-byte header. Zero MTU fragmentation!
+                    net.SendTo(ping_pkt, header_size, peer_id)
                 end
             end
 
             local count = net.RecvAll(handshake_buffer, 32)
             for i = 0, count - 1 do
-                local pkt = handshake_buffer[i]
-                if pkt.session_token == session_token then
-                    local sender = pkt.player_id
+                local rx_pkt = handshake_buffer[i]
+
+                -- [!] Extract the C-side raw data into our Lua struct
+                ffi.copy(scratch_handshake, rx_pkt.data, header_size)
+
+                if scratch_handshake.session_token == session_token then
+                    local sender = scratch_handshake.player_id
                     p2p_heard[sender] = true
-                    if pkt.frame_tick >= 1 and not p2p_established[sender] then
+                    if scratch_handshake.frame_tick >= 1 and not p2p_established[sender] then
                         p2p_established[sender] = true
                         print(string.format("[ICE] Mutual P2P Punch-Through SUCCESS for Node %d!", sender))
                     end
@@ -286,7 +297,10 @@ local function BootstrapNetworkTopology(local_port, my_local_ip)
     reg_pkt.session_token = session_token
     reg_pkt.player_id = local_id
     reg_pkt.frame_tick = 0
-    net.SendTo(reg_pkt, cfg_net.MAX_PLAYERS)
+
+    -- [!] Use the same 60-byte cutoff here
+    local header_size = ffi.offsetof("LockstepPacket", "commands")
+    net.SendTo(reg_pkt, header_size, cfg_net.MAX_PLAYERS)
 
     print("[SYSTEM] All routes bound. Drop-in complete.")
     return session_token, local_id, p2p_established, active_peers, status_data
