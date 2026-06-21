@@ -2,18 +2,23 @@ local ffi = require("ffi")
 local bit = require("bit")
 local cfg = require("config_sim")
 local net = require("network")
-local cfg_net = require("config_net") -- [!] ADDED: The Registry
+local cfg_net = require("config_net")
 
 local CHAOS_PACKET_LOSS = 0.0
 local Pump = {}
--- [!] NEW: Persistent Omnibus outgoing buffer
+
+-- Persistent Buffers
+local max_packet_size = 2048
+local tx_buffer = ffi.new("uint8_t[?]", max_packet_size)
+local header_size = ffi.offsetof("LockstepPacket", "commands")
+
 local global_out_pkt = ffi.new("LockstepPacket")
+local scratch_in_pkt = ffi.new("LockstepPacket") -- Decompression target
 
 function Pump.send_dynamic_history(ctx)
     local current_tick = ctx.rollback_arena.head_tick
     local conf_tick = ctx.rollback_arena.confirmed_tick
 
-    -- Zero the persistent memory block instead of allocating
     ffi.fill(global_out_pkt, ffi.sizeof("LockstepPacket"), 0)
     local pkt = global_out_pkt
 
@@ -27,7 +32,6 @@ function Pump.send_dynamic_history(ctx)
         pkt.checksum_tick = conf_tick
     end
 
-    -- [!] The Golden Ratio Baseline
     local needed_base = math.max(1, current_tick - cfg_net.HISTORY_HORIZON)
     local history_len = current_tick - needed_base + 1
 
@@ -38,56 +42,109 @@ function Pump.send_dynamic_history(ctx)
     pkt.base_tick = needed_base
     pkt.history_count = history_len
 
-    -- Omnibus: Pack ACKs for the entire lobby
     for p = 0, cfg_net.MAX_PLAYERS - 1 do
         if p ~= ctx.net_identity and ctx.peer_active[p] then
             pkt.peer_acks[p] = ctx.peer_highest_tick[p]
         end
     end
 
+    -- 1. Populate the raw structs as usual
     for i = 0, history_len - 1 do
         local h_tick = needed_base + i
         local h_idx = bit.band(h_tick, cfg_net.RING_MASK)
         local frame = ctx.rollback_arena.frames[h_idx]
 
-        -- High performance 16-byte contiguous array copy
         local src_ptr = ffi.cast("uint64_t*", frame.commands[ctx.net_identity])
         local dst_ptr = ffi.cast("uint64_t*", pkt.commands[i])
         dst_ptr[0] = src_ptr[0]
         dst_ptr[1] = src_ptr[1]
     end
 
-    -- Topology Routing: P2P + Single Dedicated Relay Megaphone
+    -- RLE COMPRESSION PASS
+    ffi.copy(tx_buffer, pkt, header_size)
+    local offset = header_size
+    local current_run_count = 0
+    local current_cmd_ptr = nil
+
+    for i = 0, history_len - 1 do
+        local cmd_ptr = ffi.cast("uint64_t*", pkt.commands[i])
+
+        if current_run_count == 0 then
+            current_cmd_ptr = cmd_ptr
+            current_run_count = 1
+        elseif current_cmd_ptr[0] == cmd_ptr[0] and current_cmd_ptr[1] == cmd_ptr[1] then
+            current_run_count = current_run_count + 1
+            if current_run_count == 255 then
+                tx_buffer[offset] = current_run_count
+                ffi.copy(tx_buffer + offset + 1, current_cmd_ptr, 16)
+                offset = offset + 17
+                current_run_count = 0
+            end
+        else
+            tx_buffer[offset] = current_run_count
+            ffi.copy(tx_buffer + offset + 1, current_cmd_ptr, 16)
+            offset = offset + 17
+
+            current_cmd_ptr = cmd_ptr
+            current_run_count = 1
+        end
+    end
+
+    if current_run_count > 0 then
+        tx_buffer[offset] = current_run_count
+        ffi.copy(tx_buffer + offset + 1, current_cmd_ptr, 16)
+        offset = offset + 17
+    end
+
     local needs_relay = false
     for p = 0, cfg_net.MAX_PLAYERS - 1 do
         if p ~= ctx.net_identity and ctx.peer_active[p] then
             if ctx.p2p_established and ctx.p2p_established[p] then
-                net.SendTo(pkt, p) -- Direct P2P Blast
+                net.SendTo(tx_buffer, offset, p) -- Sending compressed buffer + length
             else
                 needs_relay = true
             end
         end
     end
 
-    -- [!] FIRE THE MEGAPHONE
-    -- Send exactly one packet to the pristine Dedicated Relay Socket (Index 8)
     if needs_relay then
-        net.SendTo(pkt, cfg_net.MAX_PLAYERS)
+        net.SendTo(tx_buffer, offset, cfg_net.MAX_PLAYERS)
     end
 end
 
 local MAX_BURST_PACKETS = 256
-local global_in_buffer = ffi.new("LockstepPacket[?]", MAX_BURST_PACKETS)
+-- [!] CHANGED: Receive into the raw byte wrapper
+local global_in_buffer = ffi.new("RxPacket[?]", MAX_BURST_PACKETS)
 
 function Pump.intercept_network(ctx, current_tick)
     local count = net.RecvAll(global_in_buffer, MAX_BURST_PACKETS)
 
     for i = 0, count - 1 do
-        local pkt = global_in_buffer[i]
+        local rx_pkt = global_in_buffer[i]
+        local pkt = scratch_in_pkt
+
+        -- RLE DECOMPRESSION PASS
+        ffi.copy(pkt, rx_pkt.data, header_size)
+
+        local rx_offset = header_size
+        local cmd_index = 0
+
+        while rx_offset < rx_pkt.len and cmd_index < pkt.history_count do
+            local run_count = rx_pkt.data[rx_offset]
+            local cmd_data = rx_pkt.data + rx_offset + 1
+
+            for r = 0, run_count - 1 do
+                if cmd_index < pkt.history_count then
+                    ffi.copy(pkt.commands[cmd_index], cmd_data, 16)
+                    cmd_index = cmd_index + 1
+                end
+            end
+            rx_offset = rx_offset + 17
+        end
+
+        -- The rest of your logic runs perfectly on the decompressed 'pkt'
         local pid = pkt.player_id
 
-        -- [!] SSoT: Echo Drop & Omnibus ACK Extraction
-        -- Discard our own broadcast megaphone echoes bouncing back from the Python relay.
         if pid == ctx.net_identity then
             goto continue_inbox
         end
@@ -123,7 +180,6 @@ function Pump.intercept_network(ctx, current_tick)
                         h_frame.remote_checksum = 0
                     end
 
-                    -- Treat 2x 8-byte PlayerCommands as two 64-bit ints for rapid desync detection
                     local inc_ptr = ffi.cast("uint64_t*", pkt.commands[h])
                     local h_ptr   = ffi.cast("uint64_t*", h_frame.commands[pid])
 
@@ -142,10 +198,6 @@ function Pump.intercept_network(ctx, current_tick)
 
             local payload_highest_tick = pkt.base_tick + pkt.history_count - 1
 
-            -- [!] FIXED: The Contiguous ACK Guard
-            -- Only advance consensus if the incoming packet perfectly overlaps or connects 
-            -- to our currently verified timeline. If pkt.base_tick is floating in the future, 
-            -- it means packets arrived out of order and we have a hole in reality.
             if pkt.base_tick <= ctx.peer_highest_tick[pid] + 1 then
                 if payload_highest_tick > ctx.peer_highest_tick[pid] then
                     ctx.peer_highest_tick[pid] = payload_highest_tick

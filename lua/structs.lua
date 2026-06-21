@@ -50,13 +50,6 @@ M.specs = {
         }
     },
     {
-        name = "MultiverseArena", align = 64, force_align = true,
-        members = {
-            -- CFG_GRID_CELLS is 262144 (256 * 256 * 4)
-            { type = "uint16_t", name = "multiverse_terrain", count = {8, 262144} }
-        }
-    },
-    {
         name = "DrawCommand", c_only = true, align = 8,
         members = {
             { type = "uint64_t", name = "pipeline_id" },
@@ -145,7 +138,14 @@ M.specs = {
             { type = "uint32_t", name = "rollback_target" },
             { type = "NetworkFrame", name = "frames", count = cfg_net.RING_SIZE }
         }
-    }
+    },
+    {
+        name = "RxPacket", c_only = true, align = 2,
+        members = {
+            { type = "uint16_t", name = "len" },
+            { type = "uint8_t", name = "data", count = 2048 }
+        }
+    },
 }
 
 -- Code Generation and FFI Binding Setup

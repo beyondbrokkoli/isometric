@@ -200,7 +200,8 @@ EXPORT void vx_net_send_to(LockstepPacket* pkt, uint8_t target_peer) {
 }
 
 // Drains the OS UDP buffer directly into Lua's FFI memory block
-EXPORT int vx_net_recv_all(LockstepPacket* out_buffer, int max_count) {
+// In vx_net.c
+EXPORT int vx_net_recv_all(RxPacket* out_buffer, int max_count) {
     if (g_net.sock == NET_INVALID || !out_buffer) return 0;
 
     struct sockaddr_in from;
@@ -208,22 +209,23 @@ EXPORT int vx_net_recv_all(LockstepPacket* out_buffer, int max_count) {
     int count = 0;
 
     while (count < max_count) {
-        ssize_t recvd = recvfrom(g_net.sock, (char*)&out_buffer[count], sizeof(LockstepPacket), 0, (struct sockaddr*)&from, &from_len);
-
-        // EWOULDBLOCK means the OS buffer is empty. We are done for this frame.
+        ssize_t recvd = recvfrom(g_net.sock, (char*)out_buffer[count].data, 2048, 0, (struct sockaddr*)&from, &from_len);
         if (recvd < 0) break;
 
-        // Only accept perfectly sized packets
-        if (recvd == sizeof(LockstepPacket)) {
-            if (out_buffer[count].session_token != g_net.session_token) continue;
+        // At minimum, it must contain the base Lockstep headers to be valid
+        if (recvd >= 60) {
+            // Cast the raw data to easily read the headers!
+            LockstepPacket* header = (LockstepPacket*)out_buffer[count].data;
 
-            // UDP Pivot Hack: Learn IPs on the fly, BUT IGNORE THE RELAY
-            uint8_t pid = out_buffer[count].player_id;
+            if (header->session_token != g_net.session_token) continue;
+
+            uint8_t pid = header->player_id;
             if (pid < 8 && from.sin_addr.s_addr != g_relay_ip_addr) {
                 g_net.peers[pid].addr = from;
                 g_net.peers[pid].addr_len = from_len;
                 g_net.peers[pid].active = 1;
             }
+            out_buffer[count].len = (uint16_t)recvd;
             count++;
         }
     }
