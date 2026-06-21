@@ -1,0 +1,23 @@
+[HEARTBEAT] Sim Tick: 1083 | Confirmed: 1082 | Accum: 0.0090
+  -> [DIAGNOSTIC] Peer 0 | Highest Tick: 1083 | AckOfMe: 1081
+  -> [DIAGNOSTIC] Peer 1 | Highest Tick: 0 | AckOfMe: 0
+
+[HEARTBEAT] Sim Tick: 1143 | Confirmed: 1142 | Accum: 0.0093
+  -> [DIAGNOSTIC] Peer 0 | Highest Tick: 1143 | AckOfMe: 1141
+  -> [DIAGNOSTIC] Peer 1 | Highest Tick: 0 | AckOfMe: 0
+
+[HEARTBEAT] Sim Tick: 1203 | Confirmed: 1202 | Accum: 0.0108
+  -> [DIAGNOSTIC] Peer 0 | Highest Tick: 1203 | AckOfMe: 1201
+  -> [DIAGNOSTIC] Peer 1 | Highest Tick: 0 | AckOfMe: 0
+
+[HEARTBEAT] Sim Tick: 1263 | Confirmed: 1262 | Accum: 0.0124
+  -> [DIAGNOSTIC] Peer 0 | Highest Tick: 1263 | AckOfMe: 1261
+  -> [DIAGNOSTIC] Peer 1 | Highest Tick: 0 | AckOfMe: 0
+
+[HEARTBEAT] Sim Tick: 1323 | Confirmed: 1322 | Accum: 0.0133
+  -> [DIAGNOSTIC] Peer 0 | Highest Tick: 1323 | AckOfMe: 1321
+  -> [DIAGNOSTIC] Peer 1 | Highest Tick: 0 | AckOfMe: 0
+
+[HEARTBEAT] Sim Tick: 1383 | Confirmed: 1382 | Accum: 0.0158
+  -> [DIAGNOSTIC] Peer 0 | Highest Tick: 1384 | AckOfMe: 1382
+  -> [DIAGNOSTIC] Peer 1 | Highest Tick: 0 | AckOfMe: 0
