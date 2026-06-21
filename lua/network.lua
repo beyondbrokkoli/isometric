@@ -36,8 +36,8 @@ function Network.SetPlayerId(id)
     net_lib.vx_net_set_player_id(id)
 end
 
-function Network.SendTo(pkt, peer_id)
-    net_lib.vx_net_send_to(pkt, peer_id)
+function Network.SendTo(pkt, len, peer_id)
+    net_lib.vx_net_send_to(pkt, len, peer_id)
 end
 
 function Network.RecvAll(out_buffer, max_count)

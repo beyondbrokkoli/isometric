@@ -179,28 +179,17 @@ EXPORT int vx_net_connect(uint8_t peer_id, const char* ip, int port) {
 EXPORT void vx_net_set_session(uint64_t token) { g_net.session_token = token; }
 EXPORT void vx_net_set_player_id(uint8_t id) { g_net.local_id = id; }
 
-// Dumps a packet onto the network for all active peers
-EXPORT void vx_net_send(LockstepPacket* pkt) {
-    if (g_net.sock == NET_INVALID || !pkt) return;
-    for (int i = 0; i < 8; i++) {
-        if (i == g_net.local_id || !g_net.peers[i].active) continue;
-        sendto(g_net.sock, (const char*)pkt, sizeof(LockstepPacket), 0,
-              (struct sockaddr*)&g_net.peers[i].addr, g_net.peers[i].addr_len);
-    }
-}
 
-// Add targeted routing so the pump can dynamically pack history per opponent
-EXPORT void vx_net_send_to(LockstepPacket* pkt, uint8_t target_peer) {
-    if (g_net.sock == NET_INVALID || !pkt || target_peer >= 8) return;
+EXPORT void vx_net_send_to(void* data, size_t len, uint8_t target_peer) {
+    if (g_net.sock == NET_INVALID || !data || target_peer >= 8) return;
     if (!g_net.peers[target_peer].active) return;
 
-    sendto(g_net.sock, (const char*)pkt, sizeof(LockstepPacket), 0,
+    sendto(g_net.sock, (const char*)data, len, 0,
            (struct sockaddr*)&g_net.peers[target_peer].addr,
            g_net.peers[target_peer].addr_len);
 }
 
 // Drains the OS UDP buffer directly into Lua's FFI memory block
-// In vx_net.c
 EXPORT int vx_net_recv_all(RxPacket* out_buffer, int max_count) {
     if (g_net.sock == NET_INVALID || !out_buffer) return 0;
 
