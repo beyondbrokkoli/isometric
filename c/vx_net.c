@@ -202,7 +202,7 @@ EXPORT int vx_net_recv_all(RxPacket* out_buffer, int max_count) {
         if (recvd < 0) break;
 
         // At minimum, it must contain the base Lockstep headers to be valid
-        if (recvd >= 60) {
+        if (recvd >= 36) {
             // Cast the raw data to easily read the headers!
             LockstepPacket* header = (LockstepPacket*)out_buffer[count].data;
 
