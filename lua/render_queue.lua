@@ -1,8 +1,8 @@
 local ffi = require("ffi")
-local cfg = require("config_engine")
+local cfg = require("config_gfx")
 local manifest = require("pipeline_manifest")
 local bit = require("bit")
-
+local Fixed = require("fixed_math")
 local RenderQueue = {}
 
 -- Hoisted to the module level. Created ONCE. Zero allocations per frame.
@@ -38,17 +38,32 @@ local function pack_pass(current_queue_ptr, pass_idx, pass_name, gfx, desc, tota
     return pass_idx + 1
 end
 
-function RenderQueue.PackFrame(write_idx, pc, rts_grid, vram_template, render_queues, active_render_mode, master_ptr, memory, gfx, desc, sc, total_tiles)
+-- [UPDATED] Added `net_identity` to the signature to locate the player's 2D grid
+function RenderQueue.PackFrame(write_idx, pc, rts_grid, vram_template, render_queues, active_render_mode, master_ptr, memory, gfx, desc, sc, total_tiles, net_identity)
     local FRAME_BYTES = total_tiles * ffi.sizeof("RtsTileInstance")
     local current_frame_offset = write_idx * FRAME_BYTES
     pc.aos_current_idx = current_frame_offset / 4
 
     local gpu_ptr = ffi.cast("RtsTileInstance*", master_ptr + (current_frame_offset / 4))
+
     for i = 0, total_tiles - 1 do
+        local composite_elevation = 0
+        local active_terrain = 0
+
+        -- Fold all 8 player layers into a single visual tile
+        for peer = 0, 7 do
+            local peer_elevation = rts_grid.elevation[peer][i]
+            if peer_elevation > composite_elevation then
+                composite_elevation = peer_elevation
+                active_terrain = rts_grid.terrain[peer][i]
+            end
+        end
+
+        -- Pack the flattened composite directly into the mapped VRAM slot
         gpu_ptr[i].px = vram_template[i].px
         gpu_ptr[i].pz = vram_template[i].pz
-        gpu_ptr[i].py = rts_grid.elevation[i]
-        gpu_ptr[i].tile_data = bit.lshift(rts_grid.terrain[i], 24)
+        gpu_ptr[i].py = Fixed.to_float(composite_elevation)
+        gpu_ptr[i].tile_data = bit.lshift(active_terrain, 24)
     end
 
     local packet = ffi.C.vx_stream_packet(write_idx)

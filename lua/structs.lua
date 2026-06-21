@@ -1,8 +1,7 @@
 local ffi = require("ffi")
-
+local cfg_net = require("config_net")
 local M = {}
 
--- Sizing registry to handle primitive and custom structures dynamically
 local struct_sizes = {
     float = 4, uint32_t = 4, int32_t = 4,
     uint64_t = 8, int64_t = 8,
@@ -17,16 +16,19 @@ local function get_base_size(type_str)
     if string.find(type_str, "32") or type_str == "float" then return 4 end
     if string.find(type_str, "16") then return 2 end
     if string.find(type_str, "8") then return 1 end
-    return 64 -- Fallback for unparsed raw blocks (e.g. mat4_t)
+    error("[FATAL] Unknown type size requested in SSoT Generator: " .. tostring(type_str))
 end
 
 M.specs = {
+    -- ==========================================
+    -- GRAPHICS & VULKAN MEMORY DOMAIN
+    -- ==========================================
     {
-        name = "mat4_t", glsl = "mat4", align = 16,
+        name = "mat4_t", align = 16,
         members = { { type = "float", name = "m", count = 16 } }
     },
     {
-        name = "RtsTileInstance", glsl = "RtsTileInstance", align = 16,
+        name = "RtsTileInstance", align = 16,
         members = {
             { type = "float", name = "px" },
             { type = "float", name = "py" },
@@ -35,7 +37,7 @@ M.specs = {
         }
     },
     {
-        name = "PushConstants", glsl = "PushConstants", align = 16,
+        name = "PushConstants", align = 16,
         members = {
             { type = "mat4_t",   name = "viewProj" },
             { type = "uint32_t", name = "aos_current_idx" },
@@ -48,6 +50,13 @@ M.specs = {
         }
     },
     {
+        name = "MultiverseArena", align = 64, force_align = true,
+        members = {
+            -- CFG_GRID_CELLS is 262144 (256 * 256 * 4)
+            { type = "uint16_t", name = "multiverse_terrain", count = {8, 262144} }
+        }
+    },
+    {
         name = "DrawCommand", c_only = true, align = 8,
         members = {
             { type = "uint64_t", name = "pipeline_id" },
@@ -55,21 +64,21 @@ M.specs = {
             { type = "uint32_t", name = "index_count" },
             { type = "uint32_t", name = "instance_count" },
             { type = "uint32_t", name = "first_index" },
-            { type = "int32_t", name = "vertex_offset" },
+            { type = "int32_t",  name = "vertex_offset" },
             { type = "uint32_t", name = "first_instance" },
             { type = "uint16_t", name = "pc_offset" },
             { type = "uint16_t", name = "pc_size" },
-            { type = "uint8_t", name = "push_constants", count = 128 },
-            { type = "int16_t", name = "scissor_x" },
-            { type = "int16_t", name = "scissor_y" },
+            { type = "uint8_t",  name = "push_constants", count = 128 },
+            { type = "int16_t",  name = "scissor_x" },
+            { type = "int16_t",  name = "scissor_y" },
             { type = "uint16_t", name = "scissor_w" },
             { type = "uint16_t", name = "scissor_h" },
-            { type = "uint8_t", name = "cull_mode" },
-            { type = "uint8_t", name = "depth_test" },
-            { type = "uint8_t", name = "depth_write" },
-            { type = "uint8_t", name = "depth_compare_op" },
-            { type = "uint8_t", name = "front_face" },
-            { type = "uint8_t", name = "topology" }
+            { type = "uint8_t",  name = "cull_mode" },
+            { type = "uint8_t",  name = "depth_test" },
+            { type = "uint8_t",  name = "depth_write" },
+            { type = "uint8_t",  name = "depth_compare_op" },
+            { type = "uint8_t",  name = "front_face" },
+            { type = "uint8_t",  name = "topology" }
         }
     },
     {
@@ -88,37 +97,53 @@ M.specs = {
             { type = "uint32_t", name = "height" }
         }
     },
+
+    -- ==========================================
+    -- LOCKSTEP NETWORKING DOMAIN
+    -- ==========================================
     {
-        name = "LockstepPacket", c_only = true, align = 8, force_align = true,
-        members = {
-            { type = "uint64_t", name = "session_token" }, -- The crypto handshake key
-            { type = "uint32_t", name = "frame_tick" },
-            { type = "uint32_t", name = "player_input" },
-            { type = "int32_t", name = "click_grid_idx" },
-            { type = "uint32_t", name = "past_inputs", count = 7 },
-            { type = "int32_t", name = "past_clicks", count = 7 }
+       name = "PlayerCommand", align = 1, force_align = true, wire_format = true,
+       members = {
+            { type = "uint8_t",  name = "opcode" },
+            { type = "uint8_t",  name = "flags" },
+            { type = "uint16_t", name = "target_id" },
+            { type = "uint32_t", name = "target_pos" }
         }
     },
-    -- [NEW] Rollback Network Engine Core Containment Types
     {
-        name = "RollbackFrame", c_only = true, align = 4, force_align = true,
+        name = "LockstepPacket", align = 1, wire_format = true, force_align = true,
+        members = {
+            { type = "uint64_t", name = "session_token" },
+            { type = "uint32_t", name = "frame_tick" },
+            { type = "uint32_t", name = "checksum_tick" },
+            { type = "uint32_t", name = "state_checksum" },
+            { type = "uint32_t", name = "base_tick" },
+            { type = "uint8_t",  name = "player_id" },
+            { type = "uint8_t",  name = "history_count" },
+            { type = "uint16_t", name = "_align_pad" },
+            { type = "uint32_t", name = "peer_acks", count = cfg_net.MAX_PLAYERS },
+            { type = "PlayerCommand", name = "commands", count = { cfg_net.HISTORY_LEN, 2 } }
+        }
+    },
+    {
+        name = "NetworkFrame", align = 4, force_align = true,
         members = {
             { type = "uint32_t", name = "tick" },
-            { type = "uint32_t", name = "local_input" },
-            { type = "uint32_t", name = "remote_input" },
-            { type = "int32_t", name = "local_click" },  -- [RENAMED]
-            { type = "int32_t", name = "remote_click" }, -- [NEW] The missing variable
-            { type = "uint8_t", name = "state" }
+            { type = "uint8_t",  name = "state" },
+            { type = "uint32_t", name = "state_checksum" },
+            { type = "uint32_t", name = "remote_checksum" },
+            { type = "uint8_t",  name = "remote_peer_id" },
+            { type = "PlayerCommand", name = "commands", count = { cfg_net.MAX_PLAYERS, 2 } }
         }
     },
     {
-        name = "RollbackBuffer", c_only = true, align = 64, force_align = true,
+        name = "RollbackBuffer", align = 64, force_align = true,
         members = {
-            { type = "RollbackFrame", name = "frames", count = 128 },
             { type = "uint32_t", name = "head_tick" },
             { type = "uint32_t", name = "confirmed_tick" },
+            { type = "uint8_t",  name = "is_rollback_active" },
             { type = "uint32_t", name = "rollback_target" },
-            { type = "uint32_t", name = "is_rollback_active" }
+            { type = "NetworkFrame", name = "frames", count = cfg_net.RING_SIZE }
         }
     }
 }
@@ -131,35 +156,56 @@ for _, struct in ipairs(M.specs) do
 
     local offset = 0
     local pad_id = 0
+
     for _, m in ipairs(struct.members) do
         local m_size = get_base_size(m.type)
 
-        -- Memory Alignment Offset Check
-        local rem = offset % m_size
-        if rem ~= 0 then
-            local pad_bytes = m_size - rem
-            cdef_builder = cdef_builder .. string.format("    uint8_t _pad_%d[%d];\n", pad_id, pad_bytes)
-            offset = offset + pad_bytes
-            pad_id = pad_id + 1
+        -- C-Side Padding for FFI sync (Disabled for wire formats)
+        if not struct.wire_format then
+            local rem = offset % m_size
+            if rem ~= 0 then
+                local pad_bytes = m_size - rem
+                cdef_builder = cdef_builder .. string.format("    uint8_t _pad_%d[%d];\n", pad_id, pad_bytes)
+                offset = offset + pad_bytes
+                pad_id = pad_id + 1
+            end
         end
 
-        local arr = m.count and string.format("[%d]", m.count) or ""
+        -- Array Generation
+        local arr = ""
+        local element_count = 1
+        if type(m.count) == "table" then
+            for _, dim in ipairs(m.count) do
+                arr = arr .. string.format("[%d]", dim)
+                element_count = element_count * dim
+            end
+        elseif m.count then
+            arr = string.format("[%d]", m.count)
+            element_count = m.count
+        end
+
         cdef_builder = cdef_builder .. string.format("    %s %s%s;\n", m.type, m.name, arr)
-        offset = offset + (m_size * (m.count or 1))
+
+        local real_size = m_size * element_count
+        if struct_sizes[m.type] then
+            real_size = struct_sizes[m.type] * element_count
+        end
+        offset = offset + real_size
     end
 
-    -- Structure Boundary Alignment Check
-    local tail_rem = offset % struct.align
-    if tail_rem ~= 0 then
-        local tail_pad = struct.align - tail_rem
-        cdef_builder = cdef_builder .. string.format("    uint8_t _pad_tail[%d];\n", tail_pad)
-        offset = offset + tail_pad
+    -- Tail alignment enforcement
+    if not struct.wire_format then
+        local tail_rem = offset % struct.align
+        if tail_rem ~= 0 then
+            local tail_pad = struct.align - tail_rem
+            cdef_builder = cdef_builder .. string.format("    uint8_t _pad_tail[%d];\n", tail_pad)
+            offset = offset + tail_pad
+        end
     end
 
     cdef_builder = cdef_builder .. "} " .. struct.name .. ";\n\n"
-    struct_sizes[struct.name] = offset -- Feed structural footprint back into registry
+    struct_sizes[struct.name] = offset
 end
 
 ffi.cdef(cdef_builder)
-
 return M
