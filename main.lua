@@ -694,7 +694,7 @@ local function main()
                     ctx.sim_tick_count, ctx.rollback_arena.confirmed_tick, ctx.accumulator))
 
                 for p = 0, cfg_net.MAX_PLAYERS - 1 do
-                    if ctx.peer_active[p] then
+                    if ctx.peer_active[p] and p ~= ctx.net_identity then
                         print(string.format("  -> [DIAGNOSTIC] Peer %d | Highest Tick: %d | AckOfMe: %d",
                             p, ctx.peer_highest_tick[p], ctx.peer_ack_of_me[p]))
                     end
