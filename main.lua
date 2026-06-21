@@ -171,8 +171,19 @@ local function BootstrapNetworkTopology(local_port, my_local_ip)
     })
 
     if mode_input == "H" then
-        print("[MATCHMAKER] Requesting new lobby...")
-        local response = http_post(cfg_net.MATCHMAKER_URL .. "/host", initial_payload)
+        print("Enter Target Lobby Size (2-8):")
+        io.write("> ")
+        local target_size = tonumber(io.read("*l")) or 2
+        target_size = math.max(2, math.min(8, target_size)) -- Clamp to engine limits
+
+        local host_payload = json_util.encode({
+            public_ip = my_pub_ip, public_port = my_pub_port,
+            local_ip = my_local_ip, local_port = local_port,
+            target_size = target_size -- Inject dynamic size
+        })
+
+        print(string.format("[MATCHMAKER] Requesting new lobby for %d players...", target_size))
+        local response = http_post(cfg_net.MATCHMAKER_URL .. "/host", host_payload)
         session_token = extract_true_64bit_token(response)
         lobby_id = json_util.decode(response).lobby_id
         print("[MATCHMAKER] Hosted Lobby, holding room: " .. lobby_id)
@@ -443,9 +454,14 @@ local function main()
         snapshot_ring = ffi.new(string.format("%s[%d]", Game.GetStateName(), cfg_net.RING_SIZE))
     }
 
-    -- Populate peer active states
+    -- Populate peer active states (The "Ghost Player" Trick)
     for p = 0, cfg_net.MAX_PLAYERS - 1 do
-        ctx.peer_active[p] = active_peers[p] and true or false
+        if p < #status_data.players then
+            ctx.peer_active[p] = true
+        else
+            -- THESE ARE THE GHOSTS.
+            ctx.peer_active[p] = false
+        end
     end
 
     print("[LUA IO] Booting Headless Weaver (LABORATORY)...")
