@@ -46,7 +46,7 @@ struct NetworkFrame {
     uint remote_checksum;
     uint remote_peer_id;
     // Engine injected 7 pad bytes for std430
-    uint commands[2][2];
+    uint commands[8][2];
 };
 
 struct RollbackBuffer {
@@ -55,9 +55,9 @@ struct RollbackBuffer {
     uint is_rollback_active;
     // Engine injected 3 pad bytes for std430
     uint rollback_target;
-    // Engine injected 40 pad bytes for std430
+    // Engine injected 136 pad bytes for std430
     uint frames[512];
-    // Tail padded by 8 bytes
+    // Tail padded by 40 bytes
 };
 
 #endif // REGISTRY_GLSL

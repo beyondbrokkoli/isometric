@@ -1,7 +1,7 @@
 local ConfigSim = {}
 
 ConfigSim.net = {
-    MAX_PLAYERS = 2,
+    MAX_PLAYERS = 8,
     TICK_RATE = 60,
     HISTORY_LEN = 120,
     RING_SIZE = 512,

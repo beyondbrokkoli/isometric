@@ -100,7 +100,7 @@ typedef struct {
     uint8_t player_id;
     uint8_t history_count;
     uint16_t _align_pad;
-    uint32_t peer_acks[2];
+    uint32_t peer_acks[8];
     PlayerCommand commands[120][2];
 } LockstepPacket;
 #pragma pack(pop)
@@ -113,7 +113,7 @@ typedef struct __attribute__((packed, aligned(4))) {
     uint32_t remote_checksum;
     uint8_t remote_peer_id;
     uint8_t _pad_auto_1[7];
-    PlayerCommand commands[2][2];
+    PlayerCommand commands[8][2];
 } NetworkFrame;
 
 typedef struct __attribute__((packed, aligned(64))) {
@@ -122,9 +122,9 @@ typedef struct __attribute__((packed, aligned(64))) {
     uint8_t is_rollback_active;
     uint8_t _pad_auto_0[3];
     uint32_t rollback_target;
-    uint8_t _pad_auto_1[40];
+    uint8_t _pad_auto_1[136];
     NetworkFrame frames[512];
-    uint8_t _pad_tail[8];
+    uint8_t _pad_tail[40];
 } RollbackBuffer;
 
 typedef struct __attribute__((packed)) {
